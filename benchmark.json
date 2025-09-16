@@ -1,0 +1,40 @@
+{
+  "name": "Example API Benchmark",
+  "global": {
+    "maxRequests": 100,
+    "concurrent": 10,
+    "timeout": 5000
+  },
+  "endpoints": [
+    {
+      "name": "Login",
+      "url": "https://api.example.com/auth/login",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "username": "testuser",
+        "password": "testpass"
+      },
+      "variables": [
+        {
+          "name": "authToken",
+          "path": "token",
+          "from": "response"
+        }
+      ]
+    },
+    {
+      "name": "Get User Profile",
+      "url": "https://api.example.com/user/profile",
+      "method": "GET",
+      "headers": {
+        "Authorization": "Bearer {{authToken}}"
+      },
+      "dependencies": [
+        "Login"
+      ]
+    }
+  ]
+}

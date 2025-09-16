@@ -1,0 +1,31 @@
+{
+  "name": "barbarians-bench",
+  "version": "1.0.0",
+  "description": "A TypeScript library for benchmarking REST APIs with request chaining capabilities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "barbarians-bench": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/cli.ts",
+    "start": "node dist/cli.js",
+    "watch": "tsc --watch",
+    "test": "node -e \"console.log('Barbarians-Bench CLI test')\""
+  },
+  "keywords": ["benchmark", "api", "rest", "performance", "testing", "cli"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.0.0",
+    "csv-writer": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
