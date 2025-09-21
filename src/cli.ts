@@ -18,7 +18,7 @@ program
   .command('run')
   .description('Run benchmark from configuration file')
   .option('-c, --config <file>', 'Configuration file path (JSON)', 'benchmark.json')
-  .option('-o, --output <dir>', 'Output directory for results (only used with --save, defaults to current directory)')
+  .option('-o, --output <dir>', 'Output directory for results (only used with --save, defaults to current directory)', '.')
   .option('--no-progress', 'Disable progress bar and use simple console output', false)
   .option('-d, --delay <ms>', 'Delay between requests in milliseconds', '0')
   .option('--save', 'Save results to files in the current directory', false)
