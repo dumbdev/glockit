@@ -10,6 +10,12 @@ export interface GlobalConfig {
   throttle?: number;
   concurrent?: number;
   timeout?: number;
+  /**
+   * Delay in milliseconds between consecutive requests.
+   * This delay is applied after each request, before the next one starts.
+   * Default: 0 (no delay)
+   */
+  requestDelay?: number;
 }
 
 export interface EndpointConfig {
@@ -20,6 +26,12 @@ export interface EndpointConfig {
   body?: any;
   maxRequests?: number;
   throttle?: number;
+  /**
+   * Delay in milliseconds before making this specific request.
+   * Overrides the global requestDelay if set.
+   * Default: undefined (use global requestDelay)
+   */
+  requestDelay?: number;
   variables?: VariableExtraction[];
   dependencies?: string[];
 }
@@ -40,14 +52,22 @@ export interface BenchmarkResult {
 export interface EndpointResult {
   name: string;
   url: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   totalRequests: number;
   successfulRequests: number;
   failedRequests: number;
+  /** Success rate as a value between 0 and 1 */
+  successRate: number;
   averageResponseTime: number;
   minResponseTime: number;
   maxResponseTime: number;
   requestsPerSecond: number;
   errors: string[];
+  requestResults: RequestResult[];
+  totalRequestSizeKB: number;
+  averageRequestSizeKB: number;
+  totalResponseSizeKB: number;
+  averageResponseSizeKB: number;
 }
 
 export interface BenchmarkSummary {
@@ -66,6 +86,8 @@ export interface RequestResult {
   error?: string;
   data?: any;
   headers?: Record<string, string>;
+  requestSizeKB?: number;
+  responseSizeKB?: number;
 }
 
 export class ConfigValidationError extends Error {

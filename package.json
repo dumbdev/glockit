@@ -1,22 +1,32 @@
 {
-  "name": "barbarians-bench",
+  "name": "glockit",
   "version": "1.0.0",
   "description": "A TypeScript library for benchmarking REST APIs with request chaining capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "barbarians-bench": "dist/cli.js"
+    "glockit": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js",
     "watch": "tsc --watch",
-    "test": "node -e \"console.log('Barbarians-Bench CLI test')\""
+    "test": "node -e \"console.log('Glockit CLI test')\""
   },
-  "keywords": ["benchmark", "api", "rest", "performance", "testing", "cli"],
-  "author": "",
+  "keywords": [
+    "benchmark",
+    "api",
+    "rest",
+    "performance",
+    "testing",
+    "cli"
+  ],
+  "author": "Syed Najam Abbas (https://najamabbas.me)",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "axios": "^1.6.0",
     "chalk": "^4.1.2",

@@ -2,6 +2,24 @@ import axios, { AxiosResponse } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as createCsvWriter from 'csv-writer';
+import { ProgressTracker } from './progress';
+
+/**
+ * Calculates the approximate size of an object in KB.
+ * @param obj The object to calculate size for
+ * @returns Size in KB
+ */
+function getObjectSizeKB(obj: any): number {
+  if (!obj) return 0;
+  try {
+    const jsonString = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    // Get the size in bytes and convert to KB
+    return Buffer.byteLength(jsonString, 'utf8') / 1024;
+  } catch (error) {
+    console.warn('Error calculating object size:', error);
+    return 0;
+  }
+}
 import { 
   BenchmarkConfig, 
   BenchmarkResult, 
@@ -11,34 +29,82 @@ import {
   BenchmarkSummary,
   ConfigValidator 
 } from './types';
+import chalk from "chalk";
 
 /**
- * BarbariansBench is the main benchmarking engine for REST APIs.
+ * Glockit is the main benchmarking engine for REST APIs.
  * It supports request chaining, concurrent execution, variable extraction, and result reporting.
  */
-export class BarbariansBench {
+export class Glockit {
   private variables: Map<string, any> = new Map();
+  private progressTracker?: ProgressTracker;
+  private requestDelay: number;
+
+  constructor(delay: number = 1000) {
+    this.requestDelay = Math.max(0, delay);
+  }
+
 
   /**
    * Runs the benchmark for the provided configuration.
    * @param config Benchmark configuration object.
    * @returns BenchmarkResult containing results and summary.
    */
-  async run(config: BenchmarkConfig): Promise<BenchmarkResult> {
+  async run(config: BenchmarkConfig, enableProgress: boolean = true): Promise<BenchmarkResult> {
     // Validate configuration
     const validatedConfig = ConfigValidator.validate(config);
     const startTime = Date.now();
     const results: EndpointResult[] = [];
 
-    console.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
+    // Initialize progress tracker if enabled
+    if (enableProgress) {
+      this.progressTracker = new ProgressTracker();
+      this.progressTracker.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
+    } else {
+      console.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
+    }
 
     // Process endpoints in dependency order
     const processedEndpoints = this.resolveDependencies(validatedConfig.endpoints);
 
+    // Initialize progress bars for each endpoint
+    if (this.progressTracker) {
+      for (const endpoint of processedEndpoints) {
+        const totalRequests = endpoint.maxRequests || validatedConfig.global?.maxRequests || 10;
+        this.progressTracker.initializeEndpoint(endpoint, totalRequests);
+      }
+    }
+
+    // Process each endpoint
     for (const endpoint of processedEndpoints) {
-      console.log(`🎯 Testing endpoint: ${endpoint.name}`);
-      const endpointResult = await this.benchmarkEndpoint(endpoint, validatedConfig.global);
-      results.push(endpointResult);
+      const endpointName = endpoint.name;
+      if (this.progressTracker) {
+        this.progressTracker.log(`🎯 Testing endpoint: ${endpointName}`);
+      } else {
+        console.log(`🎯 Testing endpoint: ${endpointName}`);
+      }
+      
+      try {
+        const endpointResult = await this.benchmarkEndpoint(endpoint, validatedConfig.global);
+        results.push(endpointResult);
+        
+        if (this.progressTracker) {
+          this.progressTracker.completeEndpoint(endpointName);
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (this.progressTracker) {
+          this.progressTracker.updateRequestProgress(
+            endpointName,
+            1,
+            1,
+            `Error: ${errorMsg}`.substring(0, 50)
+          );
+        } else {
+          console.error(chalk.red(`❌ Error in ${endpointName}: ${errorMsg}`));
+        }
+        throw error;
+      }
     }
 
     const endTime = Date.now();
@@ -114,12 +180,26 @@ export class BarbariansBench {
     const maxRequests = endpoint.maxRequests || globalConfig?.maxRequests || 10;
     const duration = globalConfig?.duration; // Duration in milliseconds
     const throttle = endpoint.throttle || globalConfig?.throttle || 0;
-    const concurrent = globalConfig?.concurrent || 1;
-    const timeout = globalConfig?.timeout || 5000;
+    const concurrent = Math.min(globalConfig?.concurrent || 1, maxRequests);
+    const timeout = globalConfig?.timeout || 15000;
+    // Use endpoint-specific delay if set, otherwise use global delay or default to 0
+    const requestDelay = Math.max(
+      endpoint.requestDelay ?? globalConfig?.requestDelay ?? 0,
+      this.requestDelay // Ensure class-level delay is respected
+    );
+    
+    // Log the actual delay being used
+    if (requestDelay > 0 && this.progressTracker) {
+      this.progressTracker.log(`⏳ Using request delay: ${requestDelay}ms`);
+    }
+
+    // Ensure we don't have more concurrent requests than max requests
+    const effectiveConcurrent = Math.min(concurrent, maxRequests);
 
     const startTime = Date.now();
     const results: RequestResult[] = [];
     const errors: string[] = [];
+    const endpointName = endpoint.name;
 
     // Determine execution mode: duration-based or request-count-based
     const useDuration = duration && duration > 0;
@@ -128,69 +208,155 @@ export class BarbariansBench {
       : () => results.length < maxRequests;
 
     let requestCounter = 0;
+    let lastUpdateTime = Date.now();
+    const updateInterval = 100; // Update progress every 100ms
+
+    // Function to update progress
+    const updateProgress = (status: string) => {
+      const now = Date.now();
+      if (now - lastUpdateTime >= updateInterval || 
+          status.includes('Completed') || 
+          status.includes('Error') || 
+          status.includes('Waiting')) {
+        if (this.progressTracker) {
+          // Ensure we don't exceed maxRequests
+          const current = Math.min(results.length, maxRequests);
+          const total = useDuration ? maxRequests : maxRequests;
+          
+          // Update the specific endpoint progress
+          this.progressTracker.updateEndpointProgress(
+            endpointName,
+            current,
+            total,
+            status.substring(0, 50) // Limit status length to prevent overflow
+          );
+          
+          // Force update the display
+        } else {
+          // Fallback to console logging if progress tracker is not available
+          console.log(`[${endpointName}] ${status}`);
+        }
+        lastUpdateTime = now;
+      }
+    };
+
+    // Initial progress update
+    updateProgress('Starting...');
     
-    while (shouldContinue()) {
-      // Create batch of concurrent requests
-      const batchSize = Math.min(concurrent, useDuration ? concurrent : maxRequests - results.length);
-      const promises: Promise<void>[] = [];
-
-      for (let i = 0; i < batchSize && shouldContinue(); i++) {
-        const requestPromise = (async () => {
-          try {
-            const result = await this.makeRequest(endpoint, timeout);
-            results.push(result);
-
-            // Extract variables from response if configured (only from first successful response)
-            if (result.success && endpoint.variables && results.filter(r => r.success).length === 1) {
-              this.extractVariables(endpoint.variables, result.data, result.headers);
-            }
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-            errors.push(errorMsg);
-            results.push({
-              success: false,
-              responseTime: 0,
-              error: errorMsg
-            });
-          }
-        })();
-
-        promises.push(requestPromise);
-        requestCounter++;
-      }
-
-      // Wait for all requests in this batch to complete
-      await Promise.all(promises);
-
-      // Apply throttling between batches (not between individual requests in concurrent mode)
-      if (throttle > 0 && shouldContinue()) {
-        await this.sleep(throttle);
-      }
-
-      // Safety check to prevent infinite loops in duration mode
-      if (useDuration && requestCounter > 10000) {
-        console.warn(`⚠️  Endpoint ${endpoint.name}: Reached safety limit of 10,000 requests`);
-        break;
-      }
+    // Force initial render
+    if (this.progressTracker) {
+      await new Promise(resolve => setImmediate(resolve));
     }
+    
+    let lastRequestTime = 0;
+    
+    const executeRequest = async () => {
+      while (shouldContinue()) {
+        try {
+          // Calculate time since last request
+          const now = Date.now();
+          const timeSinceLastRequest = now - lastRequestTime;
+          
+          // Apply request delay if needed
+          if (this.requestDelay > 0 && timeSinceLastRequest < this.requestDelay) {
+            const delayNeeded = this.requestDelay - timeSinceLastRequest;
+            await this.sleep(delayNeeded);
+          }
+          
+          // Update last request time before making the request
+          lastRequestTime = Date.now();
+          
+          const result = await this.makeRequest(endpoint, timeout);
+          
+          // Extract variables if this request was successful and has variables to extract
+          if (result.success && endpoint.variables?.length) {
+            this.extractVariables(endpoint.variables, result.data, result.headers);
+          }
 
+          results.push(result);
+          updateProgress(`Success: ${results.filter(r => r.success).length}/${results.length}`);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          errors.push(errorMsg);
+          results.push({
+            success: false,
+            responseTime: 0,
+            error: errorMsg
+          });
+          updateProgress(`Error: ${errorMsg.substring(0, 30)}...`);
+        }
+        
+        // Apply throttling between requests if configured
+        if (throttle > 0) {
+          await this.sleep(throttle);
+        }
+      }
+    };
+
+    // Create concurrent request executors
+    const requestPromises = [];
+    for (let i = 0; i < effectiveConcurrent; i++) {
+      requestPromises.push(executeRequest());
+    }
+    
+    // Wait for all concurrent requests to complete
+    await Promise.all(requestPromises);
+    
     const endTime = Date.now();
     const totalElapsedTime = endTime - startTime;
     const successfulResults = results.filter(r => r.success);
     const responseTimes = results.map(r => r.responseTime).filter(rt => rt > 0);
-
-    return {
-      name: endpoint.name,
-      url: this.replaceVariables(endpoint.url),
-      totalRequests: results.length,
-      successfulRequests: successfulResults.length,
-      failedRequests: results.length - successfulResults.length,
-      averageResponseTime: responseTimes.length > 0 ? responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length : 0,
-      minResponseTime: responseTimes.length > 0 ? Math.min(...responseTimes) : 0,
-      maxResponseTime: responseTimes.length > 0 ? Math.max(...responseTimes) : 0,
-      requestsPerSecond: totalElapsedTime > 0 ? (results.length / (totalElapsedTime / 1000)) : 0,
-      errors: Array.from(new Set(errors))
+    
+    // Calculate statistics
+    const totalRequests = results.length;
+    const successfulRequests = successfulResults.length;
+    const failedRequests = totalRequests - successfulRequests;
+    const successRate = totalRequests > 0 ? successfulRequests / totalRequests : 0;
+    
+    // Calculate response time statistics
+    const totalResponseTime = responseTimes.reduce((sum, rt) => sum + rt, 0);
+    const averageResponseTime = responseTimes.length > 0 ? totalResponseTime / responseTimes.length : 0;
+    const minResponseTime = responseTimes.length > 0 ? Math.min(...responseTimes) : 0;
+    const maxResponseTime = responseTimes.length > 0 ? Math.max(...responseTimes) : 0;
+    
+    // Calculate requests per second
+    const requestsPerSecond = totalElapsedTime > 0 ? (totalRequests / (totalElapsedTime / 1000)) : 0;
+    
+    // Calculate percentiles
+    const sortedResponseTimes = [...responseTimes].sort((a, b) => a - b);
+    const calculatePercentile = (percentile: number) => {
+      if (sortedResponseTimes.length === 0) return 0;
+      const index = Math.floor(sortedResponseTimes.length * percentile);
+      return sortedResponseTimes[Math.min(index, sortedResponseTimes.length - 1)];
     };
+    
+    // Create the result object
+    const endpointResult: EndpointResult = {
+      name: endpoint.name,
+      url: endpoint.url,
+      method: endpoint.method,
+      totalRequests,
+      successfulRequests,
+      failedRequests,
+      successRate,
+      averageResponseTime,
+      minResponseTime,
+      maxResponseTime,
+      requestsPerSecond,
+      errors: [...new Set(errors)], // Unique errors
+      requestResults: [], // Exclude individual request results
+      totalRequestSizeKB: results.reduce((sum, r) => sum + (r.requestSizeKB || 0), 0),
+      averageRequestSizeKB: results.length > 0 ? 
+        results.reduce((sum, r) => sum + (r.requestSizeKB || 0), 0) / results.length : 0,
+      totalResponseSizeKB: results.reduce((sum, r) => sum + (r.responseSizeKB || 0), 0),
+      averageResponseSizeKB: results.length > 0 ? 
+        results.reduce((sum, r) => sum + (r.responseSizeKB || 0), 0) / results.length : 0
+    };
+    
+    // Final progress update
+    updateProgress(`Completed ${totalRequests} requests (${successfulRequests} successful, ${failedRequests} failed)`);
+    
+    return endpointResult;
   }
 
   /**
@@ -201,40 +367,117 @@ export class BarbariansBench {
    * @returns RequestResult with response data and timing.
    */
   private async makeRequest(endpoint: EndpointConfig, timeout: number): Promise<RequestResult> {
-    const startTime = Date.now();
+    const startTime = process.hrtime();
+    let statusCode: number | undefined;
+    let error: string | undefined;
+    let data: any;
+    let headers: Record<string, string> = {};
+    let requestSizeKB = 0;
+    let responseSizeKB = 0;
+    const endpointName = endpoint.name;
+
+    // Update progress for request start
+    if (this.progressTracker) {
+      this.progressTracker.updateRequestProgress(endpointName, 0, 1, 'Starting request...');
+    }
 
     try {
       const url = this.replaceVariables(endpoint.url);
       const headers = this.replaceVariablesInObject(endpoint.headers || {});
-      const body = this.replaceVariablesInObject(endpoint.body);
+      let body = endpoint.body;
 
-      const response: AxiosResponse = await axios({
-        method: endpoint.method,
+      // Replace variables in the request body if it's an object
+      if (body && typeof body === 'object') {
+        body = this.replaceVariablesInObject(body);
+      } else if (typeof body === 'string') {
+        body = this.replaceVariables(body);
+      }
+
+      // Calculate request size in KB
+      requestSizeKB = getObjectSizeKB(body) + getObjectSizeKB(headers);
+
+      // Update progress before making the request
+      if (this.progressTracker) {
+        this.progressTracker.updateRequestProgress(endpointName, 0, 1, 'Sending request...');
+      }
+
+      // Make the request
+      const response = await axios({
+        method: endpoint.method || 'GET',
         url,
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
         data: body,
         timeout,
-        validateStatus: () => true // Accept all status codes
+        validateStatus: () => true, // Don't throw on HTTP error status
+        onUploadProgress: (progressEvent) => {
+          if (this.progressTracker && progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            this.progressTracker.updateRequestProgress(
+              endpointName,
+              progressEvent.loaded,
+              progressEvent.total,
+              `Uploading: ${percent}%`
+            );
+          }
+        },
+        onDownloadProgress: (progressEvent) => {
+          if (this.progressTracker && progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            this.progressTracker.updateRequestProgress(
+              endpointName,
+              progressEvent.loaded,
+              progressEvent.total,
+              `Downloading: ${percent}%`
+            );
+          }
+        }
       });
 
-      const endTime = Date.now();
-      const responseTime = endTime - startTime;
+      const [seconds, nanoseconds] = process.hrtime(startTime);
+      const responseTime = (seconds * 1000) + (nanoseconds / 1e6);
+
+      // Calculate response size in KB
+      const responseHeadersSize = getObjectSizeKB(response.headers);
+      const responseDataSize = getObjectSizeKB(response.data);
+      responseSizeKB = responseHeadersSize + responseDataSize;
+
+      statusCode = response.status;
+      data = response.data;
+      const responseHeaders = response.headers as Record<string, string>;
+
+      // Update progress on successful response
+      if (this.progressTracker) {
+        this.progressTracker.updateRequestProgress(
+          endpointName,
+          1,
+          1,
+          `Completed (${statusCode})`
+        );
+      }
 
       return {
-        success: response.status >= 200 && response.status < 400,
+        success: response.status >= 200 && response.status < 300,
         responseTime,
-        statusCode: response.status,
-        data: response.data,
-        headers: response.headers as Record<string, string>
+        statusCode,
+        data,
+          headers: responseHeaders,
+        requestSizeKB: parseFloat(requestSizeKB.toFixed(6)), // Round to 6 decimal places
+        responseSizeKB: parseFloat(responseSizeKB.toFixed(6))
       };
     } catch (error) {
-      const endTime = Date.now();
-      const responseTime = endTime - startTime;
+      const [seconds, nanoseconds] = process.hrtime(startTime);
+      const responseTime = (seconds * 1000) + (nanoseconds / 1e6);
       
       return {
         success: false,
         responseTime,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
+        statusCode: (error as any)?.response?.status,
+        requestSizeKB: parseFloat(requestSizeKB.toFixed(6)),
+        responseSizeKB: 0
       };
     }
   }
@@ -314,19 +557,31 @@ export class BarbariansBench {
   }
 
   /**
+   * Sanitizes variable values for logging, hiding sensitive data.
+   * @param value Variable value.
+   * @param variableName Variable name.
+   * @returns Sanitized string for logging.
+   */
+  /**
+   * Sanitizes a value for logging, hiding sensitive data.
+   * @param value The value to sanitize.
+   * @param variableName The name of the variable being logged.
+   * @returns A sanitized string representation of the value.
+   */
+  /**
    * Sleeps for the specified number of milliseconds.
-   * @param ms Milliseconds to sleep.
-   * @returns Promise that resolves after ms.
+   * @param ms Number of milliseconds to sleep.
+   * @returns A promise that resolves after the specified delay.
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
-   * Sanitizes variable values for logging, hiding sensitive data.
-   * @param value Variable value.
-   * @param variableName Variable name.
-   * @returns Sanitized string for logging.
+   * Sanitizes a value for logging, hiding sensitive data.
+   * @param value The value to sanitize.
+   * @param variableName The name of the variable being logged.
+   * @returns A sanitized string representation of the value.
    */
   private sanitizeForLogging(value: any, variableName: string): string {
     if (typeof value !== 'string') {
@@ -342,17 +597,13 @@ export class BarbariansBench {
     const isSensitive = sensitivePatterns.some(pattern => pattern.test(variableName));
     
     if (isSensitive) {
-      // Show only first and last few characters for sensitive data
-      if (value.length > 8) {
-        return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`;
-      } else {
-        return '[hidden]';
-      }
+      return '********';
     }
     
-    // For non-sensitive variables, show the full value but limit length
-    if (value.length > 100) {
-      return value.substring(0, 97) + '...';
+    // Truncate long values
+    const maxLength = 100;
+    if (value.length > maxLength) {
+      return `${value.substring(0, maxLength)}... [truncated ${value.length - maxLength} chars]`;
     }
     
     return value;

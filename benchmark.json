@@ -1,15 +1,16 @@
 {
   "name": "Example API Benchmark",
   "global": {
-    "maxRequests": 100,
-    "concurrent": 10,
-    "timeout": 5000
+    "maxRequests": 200,
+    "concurrent": 1,
+    "timeout": 15000
   },
   "endpoints": [
     {
       "name": "Login",
       "url": "https://api.example.com/auth/login",
       "method": "POST",
+      "maxRequests" : 1,
       "headers": {
         "Content-Type": "application/json"
       },

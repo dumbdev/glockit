@@ -2,7 +2,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { BarbariansBench } from './index';
+import { Glockit } from './index';
 import { BenchmarkConfig, ConfigValidator, ConfigValidationError } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -10,7 +10,7 @@ import * as path from 'path';
 const program = new Command();
 
 program
-  .name('barbarians-bench')
+  .name('glockit')
   .description('A tool to benchmark REST APIs with request chaining capabilities')
   .version('1.0.0');
 
@@ -18,10 +18,13 @@ program
   .command('run')
   .description('Run benchmark from configuration file')
   .option('-c, --config <file>', 'Configuration file path (JSON)', 'benchmark.json')
-  .option('-o, --output <dir>', 'Output directory for results', 'results')
+  .option('-o, --output <dir>', 'Output directory for results (only used with --save, defaults to current directory)')
+  .option('--no-progress', 'Disable progress bar and use simple console output', false)
+  .option('-d, --delay <ms>', 'Delay between requests in milliseconds', '0')
+  .option('--save', 'Save results to files in the current directory', false)
   .action(async (options) => {
     try {
-      console.log(chalk.blue('🔥 Barbarians-Bench Starting...'));
+      console.log(chalk.blue('🔥 Glockit Starting...'));
       
       // Check if config file exists
       if (!fs.existsSync(options.config)) {
@@ -48,7 +51,7 @@ program
         if (validationError instanceof ConfigValidationError) {
           console.error(chalk.red('❌ Configuration validation failed:'));
           console.error(chalk.red(validationError.message));
-          console.log(chalk.yellow('\n💡 Use "barbarians-bench example" to generate a valid configuration template.'));
+          console.log(chalk.yellow('\n💡 Use "glockit example" to generate a valid configuration template.'));
         } else {
           console.error(chalk.red('❌ Unexpected validation error:'), validationError);
         }
@@ -62,21 +65,52 @@ program
 
       console.log(chalk.green(`📋 Configuration loaded: ${config.endpoints.length} endpoints`));
       
-      // Run benchmark
-      const bench = new BarbariansBench();
-      const results = await bench.run(config);
+      // Parse delay
+      const delay = parseInt(options.delay, 10) || 0;
+      if (delay > 0) {
+        console.log(chalk.yellow(`⏳ Adding ${delay}ms delay between requests`));
+      }
+
+      // Run benchmark with progress tracking
+      const bench = new Glockit(delay);
+      const results = await bench.run(config, options.progress !== false);
       
-      // Save results
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const jsonFile = path.join(options.output, `benchmark-${timestamp}.json`);
-      const csvFile = path.join(options.output, `benchmark-${timestamp}.csv`);
+      // Save results if --save flag is set
+      if (options.save) {
+        const outputDir = options.output || '.'; // Use current directory if no output specified
+        
+        // Ensure output directory exists if it's not the current directory
+        if (outputDir !== '.' && !fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const jsonFile = path.join(outputDir, `benchmark-${timestamp}.json`);
+        const csvFile = path.join(outputDir, `benchmark-${timestamp}.csv`);
+        
+        await bench.saveResults(results, jsonFile, csvFile);
+        
+        if (options.progress === false) {
+          const outputPath = outputDir === '.' ? 'current directory' : outputDir;
+          console.log(chalk.blue(`📊 Results saved to: ${path.join(outputPath, `benchmark-${timestamp}.{json,csv}`)}`));
+        }
+      } else if (options.progress === false) {
+        console.log(chalk.yellow('ℹ️  Results not saved (use --save to save results)'));
+      }
       
-      await bench.saveResults(results, jsonFile, csvFile);
+      if (options.progress === false) {
+        console.log(chalk.green('✅ Benchmark completed!'));
+      }
       
-      console.log(chalk.green('✅ Benchmark completed!'));
-      console.log(chalk.blue(`📊 Results saved to:`));
-      console.log(chalk.blue(`   JSON: ${jsonFile}`));
-      console.log(chalk.blue(`   CSV:  ${csvFile}`));
+      // Print summary
+      const summary = results.summary;
+      console.log(chalk.green('\n📈 Benchmark Summary:'));
+      console.log(chalk.blue(`   Total Requests: ${summary.totalRequests}`));
+      console.log(chalk.green(`   Successful: ${summary.totalSuccessful}`));
+      console.log(chalk.red(`   Failed: ${summary.totalFailed}`));
+      console.log(chalk.blue(`   Total Duration: ${(summary.totalDuration / 1000).toFixed(2)}s`));
+      console.log(chalk.blue(`   Requests/Second: ${summary.overallRequestsPerSecond.toFixed(2)}`));
+      console.log(chalk.blue(`   Avg. Response Time: ${summary.averageResponseTime.toFixed(2)}ms`));
       
     } catch (error) {
       if (error instanceof ConfigValidationError) {
