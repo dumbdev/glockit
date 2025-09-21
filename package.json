@@ -1,6 +1,6 @@
 {
   "name": "glockit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A TypeScript library for benchmarking REST APIs with request chaining capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/najamabbas/glockit.git"
+    "url": "git+https://github.com/dumbdev/glockit.git"
   },
   "keywords": [
     "benchmark",
