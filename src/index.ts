@@ -1,6 +1,5 @@
-import axios, { AxiosResponse } from 'axios';
+import axios from 'axios';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as createCsvWriter from 'csv-writer';
 import { ProgressTracker } from './progress';
 
@@ -48,6 +47,7 @@ export class Glockit {
   /**
    * Runs the benchmark for the provided configuration.
    * @param config Benchmark configuration object.
+   * @param enableProgress
    * @returns BenchmarkResult containing results and summary.
    */
   async run(config: BenchmarkConfig, enableProgress: boolean = true): Promise<BenchmarkResult> {
@@ -182,6 +182,7 @@ export class Glockit {
     const throttle = endpoint.throttle || globalConfig?.throttle || 0;
     const concurrent = Math.min(globalConfig?.concurrent || 1, maxRequests);
     const timeout = globalConfig?.timeout || 15000;
+    const baseUrl = globalConfig?.baseUrl;
     // Use endpoint-specific delay if set, otherwise use global delay or default to 0
     const requestDelay = Math.max(
       endpoint.requestDelay ?? globalConfig?.requestDelay ?? 0,
@@ -266,8 +267,8 @@ export class Glockit {
           // Update last request time before making the request
           lastRequestTime = Date.now();
           
-          const result = await this.makeRequest(endpoint, timeout);
-          
+          const result = await this.makeRequest(endpoint, timeout, baseUrl);
+
           // Extract variables if this request was successful and has variables to extract
           if (result.success && endpoint.variables?.length) {
             this.extractVariables(endpoint.variables, result.data, result.headers);
@@ -364,9 +365,10 @@ export class Glockit {
    * Performs variable substitution in URL, headers, and body.
    * @param endpoint Endpoint configuration.
    * @param timeout Request timeout in milliseconds.
+   * @param baseUrl Base URL from global config.
    * @returns RequestResult with response data and timing.
    */
-  private async makeRequest(endpoint: EndpointConfig, timeout: number): Promise<RequestResult> {
+  private async makeRequest(endpoint: EndpointConfig, timeout: number, baseUrl?: string): Promise<RequestResult> {
     const startTime = process.hrtime();
     let statusCode: number | undefined;
     let error: string | undefined;
@@ -382,7 +384,8 @@ export class Glockit {
     }
 
     try {
-      const url = this.replaceVariables(endpoint.url);
+      // Build the full URL using baseUrl from global config
+      const url = this.buildFullUrl(this.replaceVariables(endpoint.url), baseUrl);
       const headers = this.replaceVariablesInObject(endpoint.headers || {});
       let body = endpoint.body;
 
@@ -651,6 +654,19 @@ export class Glockit {
 
     await csvWriter.writeRecords(csvData);
   }
+
+  /**
+   * Helper to combine baseUrl and endpoint url
+   */
+  private buildFullUrl(endpointUrl: string, baseUrl?: string): string {
+    if (!endpointUrl) return '';
+    // If endpointUrl is absolute, return as-is
+    if (/^https?:\/\//i.test(endpointUrl)) return endpointUrl;
+    if (!baseUrl) return endpointUrl;
+    // Ensure proper joining of baseUrl and endpointUrl
+    return baseUrl.replace(/\/$/, '') + '/' + endpointUrl.replace(/^\//, '');
+  }
 }
 
 export * from './types';
+

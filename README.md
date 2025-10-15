@@ -51,6 +51,7 @@ npm install glockit
     "maxRequests": 100,
     "concurrent": 10,
     "timeout": 5000,
+    "requestDelay": 0,
     "headers": {
       "Content-Type": "application/json",
       "Accept": "application/json"
@@ -59,7 +60,7 @@ npm install glockit
   "endpoints": [
     {
       "name": "User Login",
-      "path": "/auth/login",
+      "url": "/auth/login",
       "method": "POST",
       "body": {
         "email": "test@example.com",
@@ -75,7 +76,7 @@ npm install glockit
     },
     {
       "name": "Get Products",
-      "path": "/products",
+      "url": "/products",
       "method": "GET",
       "headers": {
         "Authorization": "Bearer {{authToken}}"
@@ -91,7 +92,7 @@ npm install glockit
     },
     {
       "name": "Add to Cart",
-      "path": "/cart/items",
+      "url": "/cart/items",
       "method": "POST",
       "headers": {
         "Authorization": "Bearer {{authToken}}"
@@ -107,38 +108,23 @@ npm install glockit
 ```
 
 2. Run the benchmark:
+
 ```sh
-glockit run -c benchmark.json -o results/
+npx glockit run --config benchmark.json --save
 ```
 
 ## CLI Usage
 
-### Generate Example Configuration
-Create a sample `benchmark.json` file to get started:
-```sh
-glockit example
+```
+glockit run [options]
 ```
 
-### Run Benchmark
-Run a benchmark with the default configuration file (`benchmark.json`):
-```sh
-glockit run
-```
-
-Run with custom configuration and output directory:
-```sh
-glockit run -c path/to/your/config.json -o ./results/
-```
-
-### Available Options
-```
-Options:
-  -c, --config <file>    Path to configuration file (default: benchmark.json)
-  -o, --output <dir>     Output directory for results (default: results)
-  --no-progress          Disable progress bar and use simple console output
-  -d, --delay <ms>       Delay between requests in milliseconds (default: 0)
-  -h, --help             Display help for command
-```
+**Options:**
+- `-c, --config <file>`: Configuration file path (default: benchmark.json)
+- `-o, --output <dir>`: Output directory for results (default: current directory)
+- `--no-progress`: Disable progress bar
+- `-d, --delay <ms>`: Delay between requests in milliseconds
+- `--save`: Save results to files (JSON/CSV)
 
 ## Programmatic Usage
 
@@ -210,34 +196,25 @@ runBenchmark();
 
 ## Configuration Reference
 
-### Global Configuration
-
-| Property     | Type   | Required | Default | Description |
-|--------------|--------|----------|---------|-------------|
-| `name`       | string | No       | -       | Name of the benchmark test |
-| `description`| string | No       | -       | Description of the benchmark |
-| `baseUrl`    | string | No       | -       | Base URL for all endpoints (can be overridden per endpoint) |
-| `maxRequests`| number | No       | 100     | Total number of requests to make |
-| `concurrent` | number | No       | 10      | Number of concurrent requests |
-| `timeout`    | number | No       | 10000   | Request timeout in milliseconds |
-| `headers`    | object | No       | {}      | Default headers for all requests |
-
-### Endpoint Configuration
-
-Each endpoint can have the following properties:
-
-| Property     | Type     | Required | Description |
-|--------------|----------|----------|-------------|
-| `name`       | string   | Yes      | Unique name for the endpoint |
-| `path`       | string   | Yes*     | API endpoint path (relative to baseUrl) |
-| `url`        | string   | Yes*     | Full URL (alternative to path) |
-| `method`     | string   | No       | HTTP method (GET, POST, etc.) |
-| `headers`    | object   | No       | Request headers |
-| `body`       | any      | No       | Request body (for POST, PUT, PATCH) |
-| `query`      | object   | No       | Query parameters |
-| `variables`  | array    | No       | Variables to extract from response |
-| `dependencies`| array   | No       | Names of endpoints that must complete first |
-| `weight`     | number   | No       | Weight for request distribution |
+- `name` (string): Benchmark name
+- `description` (string): Description
+- `global` (object): Global settings
+  - `baseUrl` (string): Base URL for endpoints
+  - `maxRequests` (number): Total requests
+  - `duration` (number): Duration in ms
+  - `throttle` (number): Throttle rate
+  - `concurrent` (number): Concurrent requests
+  - `timeout` (number): Request timeout
+  - `requestDelay` (number): Delay between requests
+- `endpoints` (array): List of endpoint configs
+  - `name` (string): Endpoint name
+  - `url` (string): Endpoint path (relative to baseUrl)
+  - `method` (string): HTTP method
+  - `headers` (object): Request headers
+  - `body` (object): Request body
+  - `maxRequests`, `throttle`, `requestDelay`: Endpoint-specific overrides
+  - `variables` (array): Extract variables from response/headers
+  - `dependencies` (array): Endpoint dependencies
 
 ### Variable Extraction
 
@@ -280,13 +257,13 @@ Extract values from responses to use in subsequent requests:
   "endpoints": [
     {
       "name": "Homepage",
-      "path": "/home",
+      "url": "/home",
       "method": "GET",
       "weight": 3  // This endpoint will be called 3x more often than others
     },
     {
       "name": "Search Products",
-      "path": "/products/search",
+      "url": "/products/search",
       "method": "GET",
       "query": {
         "q": "{{$randomWord}}",
@@ -296,12 +273,12 @@ Extract values from responses to use in subsequent requests:
     },
     {
       "name": "Product Detail",
-      "path": "/products/{{$randomFrom([1,2,3,4,5])}}",
+      "url": "/products/{{$randomFrom([1,2,3,4,5])}}",
       "method": "GET"
     },
     {
       "name": "Add to Cart",
-      "path": "/cart/items",
+      "url": "/cart/items",
       "method": "POST",
       "headers": {
         "Authorization": "Bearer {{authToken}}"

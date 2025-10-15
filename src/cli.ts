@@ -133,42 +133,46 @@ program
   .option('-o, --output <file>', 'Output file path', 'benchmark.json')
   .action((options) => {
     const exampleConfig: BenchmarkConfig = {
-      name: "Example API Benchmark",
-      global: {
-        maxRequests: 100,
-        concurrent: 10,
-        timeout: 5000
-      },
-      endpoints: [
-        {
-          name: "Login",
-          url: "https://api.example.com/auth/login",
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: {
-            "username": "testuser",
-            "password": "testpass"
-          },
-          variables: [
-            {
-              name: "authToken",
-              path: "token",
-              from: "response"
-            }
-          ]
+        "name": "Example API Benchmark",
+        "global": {
+            "baseUrl": "https://api.example.com",
+            "maxRequests": 200,
+            "concurrent": 1,
+            "timeout": 15000
         },
-        {
-          name: "Get User Profile",
-          url: "https://api.example.com/user/profile",
-          method: "GET",
-          headers: {
-            "Authorization": "Bearer {{authToken}}"
-          },
-          dependencies: ["Login"]
-        }
-      ]
+        "endpoints": [
+            {
+                "name": "Login",
+                "url": "/auth/login",
+                "method": "POST",
+                "maxRequests" : 1,
+                "headers": {
+                    "Content-Type": "application/json"
+                },
+                "body": {
+                    "username": "testuser",
+                    "password": "testpass"
+                },
+                "variables": [
+                    {
+                        "name": "authToken",
+                        "path": "token",
+                        "from": "response"
+                    }
+                ]
+            },
+            {
+                "name": "Get User Profile",
+                "url": "/user/profile",
+                "method": "GET",
+                "headers": {
+                    "Authorization": "Bearer {{authToken}}"
+                },
+                "dependencies": [
+                    "Login"
+                ]
+            }
+        ]
     };
     
     fs.writeFileSync(options.output, JSON.stringify(exampleConfig, null, 2));
