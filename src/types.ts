@@ -3,6 +3,26 @@ export interface GlockitOptions {
     delay?: number;
     dryRun?: boolean;
     headers?: Record<string, string>;
+    platform?: Platform;
+}
+
+export interface Platform {
+    /** Name of the platform */
+    name: string;
+    /** Calculate size of object in KB */
+    getObjectSizeKB(obj: any): number;
+    /** Save results to files */
+    saveResults(results: BenchmarkResult, jsonPath?: string, csvPath?: string, htmlPath?: string): Promise<void>;
+    /** Log message */
+    log(message: string): void;
+    /** Log error */
+    error(message: string): void;
+    /** Read environment variable */
+    getEnvVar(name: string): string | undefined;
+    /** Get high resolution time in milliseconds */
+    now(): number;
+    /** Save HTML report */
+    saveHtmlReport(htmlContent: string, htmlPath: string): Promise<void>;
 }
 
 export interface BenchmarkConfig {
@@ -261,7 +281,7 @@ export class ConfigValidator {
         if (isAbsolute) {
             try {
                 new URL(urlWithPlaceholders);
-            } catch {
+            } catch (e) {
                 throw new ConfigValidationError(`${prefix}: Absolute URL "${endpoint.url}" is not valid (variables like {{var}} are allowed)`);
             }
         }

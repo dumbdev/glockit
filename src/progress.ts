@@ -1,4 +1,4 @@
-import { EndpointConfig } from './types';
+import { EndpointConfig, Platform } from './types';
 
 const PROGRESS_BAR_LENGTH = 30;
 
@@ -6,11 +6,14 @@ export class ProgressTracker {
   private endpointStats: Map<string, { current: number; total: number; status: string }> = new Map();
   private totalEndpoints: number = 0;
   private completedEndpoints: number = 0;
-  private startTime: number = Date.now();
+  private startTime: number;
   private lastUpdate: number = 0;
   private updateInterval = 100; // Update at most every 100ms
+  private platform: Platform;
 
-  constructor() {
+  constructor(platform: Platform) {
+    this.platform = platform;
+    this.startTime = platform.now();
     // Initialize with empty progress
     this.render();
   }
@@ -26,7 +29,7 @@ export class ProgressTracker {
   }
 
   public updateEndpointProgress(endpointName: string, current: number, total: number, status: string): void {
-    const now = Date.now();
+    const now = this.platform.now();
     if (now - this.lastUpdate < this.updateInterval) return;
     
     const stats = this.endpointStats.get(endpointName);
@@ -60,7 +63,7 @@ export class ProgressTracker {
     // For simplicity and following the requirement to not clear, we'll just print 
     // but in a real-world scenario we might use something like log-update.
     
-    const now = Date.now();
+    const now = this.platform.now();
     const elapsed = ((now - this.startTime) / 1000).toFixed(1);
 
     console.log(`\n--- Benchmark Progress (${elapsed}s elapsed) ---`);
@@ -82,16 +85,18 @@ export class ProgressTracker {
   }
 
   public log(message: string): void {
-    console.log(`[${new Date().toISOString()}] ${message}`);
+    this.platform.log(message);
   }
 
   public error(message: string): void {
-    console.error(`[${new Date().toISOString()}] [ERROR] ${message}`);
+    this.platform.error(message);
   }
 
   public stop(): void {
     // Cleanup if needed
-    console.clear();
+    if (this.platform.name === 'node') {
+        console.clear();
+    }
     console.log('Benchmark completed!');
   }
 }
