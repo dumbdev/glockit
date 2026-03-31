@@ -4,7 +4,7 @@
 
 Glockit is a lightweight TypeScript CLI and library for benchmarking REST APIs. It supports advanced request chaining, authorization dependencies, concurrent execution, variable extraction, and outputs results in JSON, CSV, and HTML formats. The tool features a clean, minimal-dependency console interface for real-time progress tracking.
 
-## New Features (v1.0.6)
+## New Features (v1.0.7)
 - **YAML Configuration Support**: Define benchmarks in `.yaml` or `.yml` files.
 - **Environment Variable Substitution**: Use `{{$env.VAR_NAME}}` in your configuration files.
 - **Pre/Post Request Hooks**: Run custom JavaScript logic before or after requests.
