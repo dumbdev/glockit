@@ -1,0 +1,57 @@
+name: Advanced API Benchmark Sample (YAML)
+global:
+  baseUrl: https://api.example.com
+  maxRequests: 100
+  concurrent: 5
+  timeout: 10000
+  requestDelay: 100
+  summaryOnly: true
+  headers:
+    X-Environment: "{{$env.NODE_ENV}}"
+    X-Client: Glockit-CLI
+
+endpoints:
+  - name: User Profile Fetch
+    url: /user/profile/{{$uuid}}
+    method: GET
+    weight: 7
+    auth:
+      name: UserAuth
+      endpoints:
+        - name: Authenticate
+          url: /auth/login
+          method: POST
+          body:
+            username: "{{$env.USER_NAME}}"
+            password: "{{$env.USER_PASS}}"
+          variables:
+            - name: sessionToken
+              path: token
+              from: response
+    headers:
+      Authorization: "Bearer {{sessionToken}}"
+    query:
+      v: 2
+      cache_bust: "{{$randomInt(1000, 9999)}}"
+    responseCheck:
+      - path: user.id
+        operator: exists
+    assertions:
+      - path: status
+        operator: equals
+        value: 200
+    retries: 3
+    beforeRequest: |
+      request.headers['X-Timestamp'] = Date.now().toString();
+
+  - name: Product Search
+    url: /products/search
+    method: GET
+    weight: 3
+    query:
+      query: "{{$randomFrom('electronics', 'books', 'home')}}"
+      page: 1
+    afterRequest: |
+      if (response.status !== 200) {
+        console.error('Search failed with status: ' + response.status);
+      }

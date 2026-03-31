@@ -55,15 +55,15 @@ export class ProgressTracker {
   }
 
   private render(): void {
-    // Clear the console
-    console.clear();
+    // We avoid console.clear() to preserve terminal history
+    // Instead, we use carriage return or just print if we want to stay clean
+    // For simplicity and following the requirement to not clear, we'll just print 
+    // but in a real-world scenario we might use something like log-update.
     
-    // Render overall progress
-    const overallProgress = this.totalEndpoints > 0 
-      ? (this.completedEndpoints / this.totalEndpoints) * 100 
-      : 0;
-    
-    console.log(`\n${this.formatProgressBar(overallProgress, 100, 'Overall')}\n`);
+    const now = Date.now();
+    const elapsed = ((now - this.startTime) / 1000).toFixed(1);
+
+    console.log(`\n--- Benchmark Progress (${elapsed}s elapsed) ---`);
     
     // Render each endpoint's progress
     this.endpointStats.forEach((stats, name) => {

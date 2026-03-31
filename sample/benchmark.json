@@ -1,0 +1,76 @@
+{
+  "name": "Advanced API Benchmark Sample",
+  "global": {
+    "baseUrl": "https://api.example.com",
+    "maxRequests": 100,
+    "concurrent": 5,
+    "timeout": 10000,
+    "requestDelay": 100,
+    "summaryOnly": false,
+    "headers": {
+      "X-Environment": "{{$env.NODE_ENV}}"
+    }
+  },
+  "endpoints": [
+    {
+      "name": "Get User Profile",
+      "url": "/user/profile/{{$uuid}}",
+      "method": "GET",
+      "weight": 8,
+      "auth": {
+        "name": "UserAuth",
+        "endpoints": [
+          {
+            "name": "Login",
+            "url": "/auth/login",
+            "method": "POST",
+            "body": {
+              "username": "testuser",
+              "password": "testpassword"
+            },
+            "variables": [
+              {
+                "name": "authToken",
+                "path": "token",
+                "from": "response"
+              }
+            ]
+          }
+        ]
+      },
+      "headers": {
+        "Authorization": "Bearer {{authToken}}"
+      },
+      "query": {
+        "fields": "id,name,email",
+        "timestamp": "{{$randomInt(1000000, 2000000)}}"
+      },
+      "responseCheck": [
+        {
+          "path": "id",
+          "operator": "exists"
+        }
+      ],
+      "assertions": [
+        {
+          "path": "status",
+          "operator": "equals",
+          "value": 200
+        }
+      ],
+      "retries": 2,
+      "beforeRequest": "request.headers['X-Request-ID'] = 'req-' + Math.random().toString(36).substr(2, 9);"
+    },
+    {
+      "name": "Search Items",
+      "url": "/items/search",
+      "method": "GET",
+      "weight": 2,
+      "query": {
+        "q": "{{$randomFrom('phone', 'laptop', 'tablet')}}",
+        "limit": 10
+      },
+      "afterRequest": "if (response.status === 200) { console.log('Search successful'); }"
+    }
+  ]
+}

@@ -1,3 +1,10 @@
+export interface GlockitOptions {
+    progress?: boolean;
+    delay?: number;
+    dryRun?: boolean;
+    headers?: Record<string, string>;
+}
+
 export interface BenchmarkConfig {
     name?: string;
     endpoints: EndpointConfig[];
@@ -17,6 +24,18 @@ export interface GlobalConfig {
      * Default: 0 (no delay)
      */
     requestDelay?: number;
+    headers?: Record<string, string>;
+    /**
+     * If true, only summary statistics are kept for each endpoint.
+     * requestResults will be empty to save memory.
+     */
+    summaryOnly?: boolean;
+}
+
+export interface ResponseCheckConfig {
+    path: string;
+    operator: 'equals' | 'contains' | 'exists' | 'matches';
+    value?: any;
 }
 
 export interface EndpointConfig {
@@ -35,12 +54,37 @@ export interface EndpointConfig {
     requestDelay?: number;
     variables?: VariableExtraction[];
     dependencies?: string[];
+    query?: Record<string, string | number | boolean>;
+    weight?: number;
+    assertions?: AssertionConfig[];
+    responseCheck?: ResponseCheckConfig[];
+    retries?: number;
+    auth?: AuthDependencyConfig;
+    /**
+     * Use HTTP/2 for the request.
+     */
+    http2?: boolean;
+    /**
+     * JavaScript hook to run before the request.
+     * Can access: request (config)
+     */
+    beforeRequest?: string;
+    /**
+     * JavaScript hook to run after the request.
+     * Can access: response (data, status, headers)
+     */
+    afterRequest?: string;
+}
+
+export interface AuthDependencyConfig {
+    name: string;
+    endpoints: EndpointConfig[];
 }
 
 export interface VariableExtraction {
     name: string;
     path: string;
-    from: 'response' | 'headers';
+    from: 'response' | 'headers' | 'cookies';
 }
 
 export interface BenchmarkResult {
@@ -48,6 +92,7 @@ export interface BenchmarkResult {
     results: EndpointResult[];
     summary: BenchmarkSummary;
     timestamp: string;
+    htmlPath?: string;
 }
 
 export interface EndpointResult {
@@ -80,6 +125,12 @@ export interface BenchmarkSummary {
     averageResponseTime: number;
 }
 
+export interface AssertionConfig {
+    path: string;
+    operator: 'equals' | 'contains' | 'exists' | 'matches';
+    value?: any;
+}
+
 export interface RequestResult {
     success: boolean;
     responseTime: number;
@@ -89,6 +140,7 @@ export interface RequestResult {
     headers?: Record<string, string>;
     requestSizeKB?: number;
     responseSizeKB?: number;
+    responseCheckPassed?: boolean;
 }
 
 export class ConfigValidationError extends Error {
@@ -132,7 +184,29 @@ export class ConfigValidator {
         // Validate dependencies
         this.validateDependencies(config.endpoints, endpointNames);
 
+        // Validate auth dependencies
+        for (const endpoint of config.endpoints) {
+            if (endpoint.auth) {
+                this.validateAuthDependency(endpoint.auth, `Endpoint "${endpoint.name}" auth`);
+            }
+        }
+
         return config as BenchmarkConfig;
+    }
+
+    private static validateAuthDependency(auth: any, prefix: string): void {
+        if (!auth || typeof auth !== 'object') {
+            throw new ConfigValidationError(`${prefix}: Must be an object`);
+        }
+        if (!auth.name || typeof auth.name !== 'string') {
+            throw new ConfigValidationError(`${prefix}: Must have a "name" string`);
+        }
+        if (!auth.endpoints || !Array.isArray(auth.endpoints)) {
+            throw new ConfigValidationError(`${prefix}: Must have an "endpoints" array`);
+        }
+        auth.endpoints.forEach((endpoint: any, index: number) => {
+            this.validateEndpoint(endpoint, `${prefix} endpoint ${index + 1}`);
+        });
     }
 
     private static validateGlobalConfig(global: any): void {
@@ -161,8 +235,8 @@ export class ConfigValidator {
         }
     }
 
-    private static validateEndpoint(endpoint: any, index: number): void {
-        const prefix = `Endpoint ${index + 1}`;
+    private static validateEndpoint(endpoint: any, index: number | string): void {
+        const prefix = typeof index === 'number' ? `Endpoint ${index + 1}` : index;
 
         if (!endpoint || typeof endpoint !== 'object') {
             throw new ConfigValidationError(`${prefix}: Must be an object`);
@@ -209,6 +283,36 @@ export class ConfigValidator {
             throw new ConfigValidationError(`${prefix}: throttle must be a non-negative integer (milliseconds)`);
         }
 
+        if (endpoint.query && typeof endpoint.query !== 'object') {
+            throw new ConfigValidationError(`${prefix}: Query must be an object`);
+        }
+
+        if (endpoint.weight !== undefined && (!Number.isFinite(endpoint.weight) || endpoint.weight <= 0)) {
+            throw new ConfigValidationError(`${prefix}: weight must be a positive number`);
+        }
+
+        if (endpoint.retries !== undefined && (!Number.isInteger(endpoint.retries) || endpoint.retries < 0)) {
+            throw new ConfigValidationError(`${prefix}: retries must be a non-negative integer`);
+        }
+
+        if (endpoint.assertions) {
+            if (!Array.isArray(endpoint.assertions)) {
+                throw new ConfigValidationError(`${prefix}: assertions must be an array`);
+            }
+            endpoint.assertions.forEach((assertion: any, aIndex: number) => {
+                this.validateAssertion(assertion, `${prefix}, assertion ${aIndex + 1}`);
+            });
+        }
+
+        if (endpoint.responseCheck) {
+            if (!Array.isArray(endpoint.responseCheck)) {
+                throw new ConfigValidationError(`${prefix}: responseCheck must be an array`);
+            }
+            endpoint.responseCheck.forEach((check: any, cIndex: number) => {
+                this.validateResponseCheck(check, `${prefix}, responseCheck ${cIndex + 1}`);
+            });
+        }
+
         if (endpoint.variables) {
             if (!Array.isArray(endpoint.variables)) {
                 throw new ConfigValidationError(`${prefix}: variables must be an array`);
@@ -228,6 +332,36 @@ export class ConfigValidator {
         }
     }
 
+    private static validateAssertion(assertion: any, prefix: string): void {
+        if (!assertion || typeof assertion !== 'object') {
+            throw new ConfigValidationError(`${prefix}: Must be an object`);
+        }
+
+        if (!assertion.path || typeof assertion.path !== 'string') {
+            throw new ConfigValidationError(`${prefix}: Must have a "path" string`);
+        }
+
+        const validOperators = ['equals', 'contains', 'exists', 'matches'];
+        if (!assertion.operator || !validOperators.includes(assertion.operator)) {
+            throw new ConfigValidationError(`${prefix}: operator must be one of: ${validOperators.join(', ')}`);
+        }
+    }
+
+    private static validateResponseCheck(check: any, prefix: string): void {
+        if (!check || typeof check !== 'object') {
+            throw new ConfigValidationError(`${prefix}: Must be an object`);
+        }
+
+        if (!check.path || typeof check.path !== 'string') {
+            throw new ConfigValidationError(`${prefix}: Must have a "path" string`);
+        }
+
+        const validOperators = ['equals', 'contains', 'exists', 'matches'];
+        if (!check.operator || !validOperators.includes(check.operator)) {
+            throw new ConfigValidationError(`${prefix}: operator must be one of: ${validOperators.join(', ')}`);
+        }
+    }
+
     private static validateVariableExtraction(variable: any, prefix: string): void {
         if (!variable || typeof variable !== 'object') {
             throw new ConfigValidationError(`${prefix}: Must be an object`);
@@ -241,8 +375,8 @@ export class ConfigValidator {
             throw new ConfigValidationError(`${prefix}: Must have a non-empty "path" string`);
         }
 
-        if (!variable.from || !['response', 'headers'].includes(variable.from)) {
-            throw new ConfigValidationError(`${prefix}: "from" must be either "response" or "headers"`);
+        if (!variable.from || !['response', 'headers', 'cookies'].includes(variable.from)) {
+            throw new ConfigValidationError(`${prefix}: "from" must be one of "response", "headers", or "cookies"`);
         }
     }
 

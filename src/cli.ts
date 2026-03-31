@@ -6,18 +6,19 @@ import { Glockit } from './index';
 import { BenchmarkConfig, ConfigValidator, ConfigValidationError } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 
 const program = new Command();
 
 program
   .name('glockit')
   .description('A tool to benchmark REST APIs with request chaining capabilities')
-  .version('1.0.0');
+  .version('1.1.0');
 
 program
   .command('run')
   .description('Run benchmark from configuration file')
-  .option('-c, --config <file>', 'Configuration file path (JSON)', 'benchmark.json')
+  .option('-c, --config <file>', 'Configuration file path (JSON/YAML)', 'benchmark.json')
   .option('-o, --output <dir>', 'Output directory for results (only used with --save, defaults to current directory)', '.')
   .option('--no-progress', 'Disable progress bar and use simple console output', false)
   .option('-d, --delay <ms>', 'Delay between requests in milliseconds', '0')
@@ -29,18 +30,25 @@ program
       // Check if config file exists
       if (!fs.existsSync(options.config)) {
         console.error(chalk.red(`❌ Configuration file not found: ${options.config}`));
-        console.log(chalk.yellow('💡 Create a benchmark.json file with your API endpoints configuration.'));
+        console.log(chalk.yellow('💡 Create a benchmark.json or benchmark.yaml file with your API endpoints configuration.'));
         process.exit(1);
       }
 
       // Load and validate configuration
       const configData = fs.readFileSync(options.config, 'utf8');
+      const isYaml = options.config.endsWith('.yaml') || options.config.endsWith('.yml');
+      
       let parsedConfig;
       try {
-        parsedConfig = JSON.parse(configData);
+        if (isYaml) {
+          parsedConfig = yaml.load(configData);
+        } else {
+          parsedConfig = JSON.parse(configData);
+        }
       } catch (parseError) {
-        console.error(chalk.red('❌ Invalid JSON in configuration file:'));
-        console.error(chalk.red(parseError instanceof Error ? parseError.message : 'Unknown JSON parsing error'));
+        const format = isYaml ? 'YAML' : 'JSON';
+        console.error(chalk.red(`❌ Invalid ${format} in configuration file:`));
+        console.error(chalk.red(parseError instanceof Error ? parseError.message : `Unknown ${format} parsing error`));
         process.exit(1);
       }
       
@@ -72,8 +80,12 @@ program
       }
 
       // Run benchmark with progress tracking
-      const bench = new Glockit(delay);
-      const results = await bench.run(config, options.progress !== false);
+      const bench = new Glockit({
+        delay,
+        progress: options.progress !== false,
+        dryRun: false // Could be added as CLI option in the future
+      });
+      const results = await bench.run(config);
       
       // Save results if --save flag is set
       if (options.save) {
@@ -87,12 +99,13 @@ program
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const jsonFile = path.join(outputDir, `benchmark-${timestamp}.json`);
         const csvFile = path.join(outputDir, `benchmark-${timestamp}.csv`);
+        const htmlFile = path.join(outputDir, `benchmark-${timestamp}.html`);
         
-        await bench.saveResults(results, jsonFile, csvFile);
+        await bench.saveResults(results, jsonFile, csvFile, htmlFile);
         
         if (options.progress === false) {
           const outputPath = outputDir === '.' ? 'current directory' : outputDir;
-          console.log(chalk.blue(`📊 Results saved to: ${path.join(outputPath, `benchmark-${timestamp}.{json,csv}`)}`));
+          console.log(chalk.blue(`📊 Results saved to: ${path.join(outputPath, `benchmark-${timestamp}.{json,csv,html}`)}`));
         }
       } else if (options.progress === false) {
         console.log(chalk.yellow('ℹ️  Results not saved (use --save to save results)'));
@@ -130,52 +143,19 @@ program
 program
   .command('example')
   .description('Generate an example configuration file')
-  .option('-o, --output <file>', 'Output file path', 'benchmark.json')
+  .option('-o, --output <file>', 'Output file path (JSON or YAML)', 'benchmark.json')
   .action((options) => {
-    const exampleConfig: BenchmarkConfig = {
-        "name": "Example API Benchmark",
-        "global": {
-            "baseUrl": "https://api.example.com",
-            "maxRequests": 200,
-            "concurrent": 1,
-            "timeout": 15000
-        },
-        "endpoints": [
-            {
-                "name": "Login",
-                "url": "/auth/login",
-                "method": "POST",
-                "maxRequests" : 1,
-                "headers": {
-                    "Content-Type": "application/json"
-                },
-                "body": {
-                    "username": "testuser",
-                    "password": "testpass"
-                },
-                "variables": [
-                    {
-                        "name": "authToken",
-                        "path": "token",
-                        "from": "response"
-                    }
-                ]
-            },
-            {
-                "name": "Get User Profile",
-                "url": "/user/profile",
-                "method": "GET",
-                "headers": {
-                    "Authorization": "Bearer {{authToken}}"
-                },
-                "dependencies": [
-                    "Login"
-                ]
-            }
-        ]
-    };
+    const exampleConfig = Glockit.generateExampleConfig();
+    const isYaml = options.output.endsWith('.yaml') || options.output.endsWith('.yml');
     
-    fs.writeFileSync(options.output, JSON.stringify(exampleConfig, null, 2));
+    let content: string;
+    if (isYaml) {
+      content = yaml.dump(exampleConfig);
+    } else {
+      content = JSON.stringify(exampleConfig, null, 2);
+    }
+    
+    fs.writeFileSync(options.output, content);
     console.log(chalk.green(`✅ Example configuration saved to: ${options.output}`));
   });
 
