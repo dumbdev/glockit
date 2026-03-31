@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name('glockit')
   .description('A tool to benchmark REST APIs with request chaining capabilities')
-  .version('1.1.0');
+  .version('1.0.4');
 
 program
   .command('run')
