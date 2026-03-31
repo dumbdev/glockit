@@ -39,6 +39,7 @@ Glockit is a lightweight TypeScript CLI and library for benchmarking REST APIs. 
 - **Automatic Retries**: Configurable retry mechanism with exponential backoff for flaky endpoints.
 - **Minimal Dependencies**: Optimized for performance and reliability.
 - **Multi-format Output**: Generates detailed JSON, CSV, and **HTML** reports with timing and size metrics.
+- **Cross-Platform Support**: Works in Node.js and Browser environments via a platform abstraction layer.
 - **Security-conscious Logging**: Automatically sanitizes sensitive data (like tokens and passwords) in logs.
 
 ## Installation
@@ -102,6 +103,9 @@ glockit run [options]
 
 Glockit can be integrated into your TypeScript projects.
 
+### Node.js
+By default, Glockit uses the `NodePlatform`.
+
 ```typescript
 import { Glockit, BenchmarkConfig } from 'glockit';
 
@@ -116,11 +120,26 @@ async function run() {
   const benchmark = new Glockit({ progress: true });
   const results = await benchmark.run(config);
   
-  console.log(`Success rate: ${results.summary.successRate * 100}%`);
+  console.log(`Success rate: ${results.summary.totalSuccessful / results.summary.totalRequests * 100}%`);
 }
 
 run();
 ```
+
+### Browser
+To use Glockit in the browser, provide the `BrowserPlatform` in the options.
+
+```typescript
+import { Glockit, BrowserPlatform } from 'glockit';
+
+const benchmark = new Glockit({ 
+  platform: new BrowserPlatform(),
+  progress: false // Progress bar is optimized for CLI
+});
+```
+
+### Custom Platform
+You can also implement the `Platform` interface to support other environments or mock behavior for testing.
 
 ## Configuration Reference
 
@@ -462,6 +481,7 @@ new Glockit(options?: {
   delay?: number;     // Global delay between requests in ms (default: 0)
   dryRun?: boolean;   // If true, no actual requests are made (default: false)
   headers?: Record<string, string>; // Global headers for all requests
+  platform?: Platform; // Platform implementation (default: NodePlatform)
 })
 ```
 

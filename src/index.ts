@@ -1,24 +1,15 @@
 import axios from 'axios';
-import * as fs from 'fs';
-import * as createCsvWriter from 'csv-writer';
 import { ProgressTracker } from './progress';
+import { NodePlatform } from './node-platform';
 
 /**
  * Calculates the approximate size of an object in KB.
  * @param obj The object to calculate size for
+ * @param platform The platform to use for calculation
  * @returns Size in KB
  */
-function getObjectSizeKB(obj: any): number {
-  if (!obj) return 0;
-  try {
-    if (typeof obj === 'string') {
-      return Buffer.byteLength(obj, 'utf8') / 1024;
-    }
-    const jsonString = JSON.stringify(obj);
-    return Buffer.byteLength(jsonString, 'utf8') / 1024;
-  } catch (error) {
-    return 0;
-  }
+function getObjectSizeKB(obj: any, platform: Platform): number {
+  return platform.getObjectSizeKB(obj);
 }
 import { 
   BenchmarkConfig, 
@@ -30,7 +21,8 @@ import {
   ConfigValidator,
   GlockitOptions,
   AssertionConfig,
-  AuthDependencyConfig
+  AuthDependencyConfig,
+  Platform
 } from './types';
 const chalk = require('chalk');
 import { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
@@ -47,6 +39,7 @@ export class Glockit {
   private options: GlockitOptions;
   private axiosInstance: AxiosInstance;
   private authVariablesMap: Map<string, Map<string, any>> = new Map();
+  private platform: Platform;
 
   constructor(options: GlockitOptions = {}) {
     this.options = {
@@ -55,6 +48,7 @@ export class Glockit {
       dryRun: false,
       ...options
     };
+    this.platform = this.options.platform || new NodePlatform();
     this.axiosInstance = axios.create();
   }
 
@@ -89,20 +83,20 @@ export class Glockit {
     const showProgress = enableProgress !== undefined ? enableProgress : this.options.progress;
     // Validate configuration
     const validatedConfig = ConfigValidator.validate(config);
-    const startTime = Date.now();
+    const startTime = this.platform.now();
     const results: EndpointResult[] = [];
 
     // Initialize progress tracker if enabled
     if (showProgress) {
-      this.progressTracker = new ProgressTracker();
+      this.progressTracker = new ProgressTracker(this.platform);
       this.progressTracker.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
     } else {
-      console.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
+      this.platform.log(`🚀 Starting benchmark with ${validatedConfig.endpoints.length} endpoints`);
     }
 
     if (this.options.dryRun) {
       if (this.progressTracker) this.progressTracker.log('DRY RUN MODE: No actual requests will be made.');
-      else console.log('DRY RUN MODE: No actual requests will be made.');
+      else this.platform.log('DRY RUN MODE: No actual requests will be made.');
     }
 
     // Process endpoints in dependency order
@@ -709,7 +703,7 @@ export class Glockit {
       }
 
       // Calculate request size in KB
-      requestSizeKB = getObjectSizeKB(body) + getObjectSizeKB(headers);
+      requestSizeKB = getObjectSizeKB(body, this.platform) + getObjectSizeKB(headers, this.platform);
 
       // --- BEFORE REQUEST HOOK ---
       if (endpoint.beforeRequest) {
@@ -828,8 +822,8 @@ export class Glockit {
       if (contentLength) {
         responseSizeKB = parseInt(contentLength, 10) / 1024;
       } else {
-        const responseHeadersSize = getObjectSizeKB(response.headers);
-        const responseDataSize = getObjectSizeKB(response.data);
+        const responseHeadersSize = getObjectSizeKB(response.headers, this.platform);
+        const responseDataSize = getObjectSizeKB(response.data, this.platform);
         responseSizeKB = responseHeadersSize + responseDataSize;
       }
 
@@ -976,7 +970,7 @@ export class Glockit {
     
     // Replace environment variables
     result = result.replace(/{{(\$env\.(.*?))}}/g, (_, __, envVarName) => {
-      return process.env[envVarName] || `{{$env.${envVarName}}}`;
+      return this.platform.getEnvVar(envVarName) || `{{$env.${envVarName}}}`;
     });
 
     // Replace custom variables
@@ -1087,45 +1081,12 @@ export class Glockit {
    * @param htmlPath Optional path to save HTML file.
    */
   async saveResults(results: BenchmarkResult, jsonPath: string, csvPath: string, htmlPath?: string): Promise<void> {
-    // Save JSON results
-    fs.writeFileSync(jsonPath, JSON.stringify(results, null, 2));
-
-    // Save CSV results
-    const csvData = results.results.map(result => ({
-      endpoint_name: result.name,
-      url: result.url,
-      total_requests: result.totalRequests,
-      successful_requests: result.successfulRequests,
-      failed_requests: result.failedRequests,
-      average_response_time_ms: Math.round(result.averageResponseTime),
-      min_response_time_ms: Math.round(result.minResponseTime),
-      max_response_time_ms: Math.round(result.maxResponseTime),
-      requests_per_second: Math.round(result.requestsPerSecond * 100) / 100,
-      error_count: result.errors.length
-    }));
-
-    const csvWriter = createCsvWriter.createObjectCsvWriter({
-      path: csvPath,
-      header: [
-        { id: 'endpoint_name', title: 'Endpoint Name' },
-        { id: 'url', title: 'URL' },
-        { id: 'total_requests', title: 'Total Requests' },
-        { id: 'successful_requests', title: 'Successful Requests' },
-        { id: 'failed_requests', title: 'Failed Requests' },
-        { id: 'average_response_time_ms', title: 'Avg Response Time (ms)' },
-        { id: 'min_response_time_ms', title: 'Min Response Time (ms)' },
-        { id: 'max_response_time_ms', title: 'Max Response Time (ms)' },
-        { id: 'requests_per_second', title: 'Requests/Second' },
-        { id: 'error_count', title: 'Error Count' }
-      ]
-    });
-
-    await csvWriter.writeRecords(csvData);
+    await this.platform.saveResults(results, jsonPath, csvPath);
 
     // Save HTML results if path provided
     if (htmlPath) {
         const html = this.generateHtmlReport(results);
-        fs.writeFileSync(htmlPath, html);
+        await this.platform.saveHtmlReport(html, htmlPath);
         results.htmlPath = htmlPath;
     }
   }
@@ -1229,7 +1190,7 @@ export class Glockit {
     </table>
 
     <div class="footer">
-        Generated by Glockit v1.0.5 - Lightweight API Benchmarking Tool
+        Generated by Glockit v1.0.6 - Lightweight API Benchmarking Tool
     </div>
 </body>
 </html>
@@ -1249,5 +1210,7 @@ export class Glockit {
   }
 }
 
+export { NodePlatform } from './node-platform';
+export { BrowserPlatform } from './browser-platform';
 export * from './types';
 
