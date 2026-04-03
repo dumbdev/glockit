@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import chalk from 'chalk';
+import chalk from 'chalk/source';
 import { Glockit } from './index';
 import { BenchmarkConfig, ConfigValidator, ConfigValidationError } from './types';
 import * as fs from 'fs';

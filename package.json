@@ -1,9 +1,16 @@
 {
   "name": "glockit",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A TypeScript library for benchmarking REST APIs with request chaining capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
   "bin": {
     "glockit": "dist/cli.js"
   },

@@ -24,7 +24,7 @@ import {
   AuthDependencyConfig,
   Platform
 } from './types';
-const chalk = require('chalk');
+const chalk = require('chalk/source');
 import { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 
 export { ProgressTracker } from './progress';
