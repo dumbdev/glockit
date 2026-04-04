@@ -1,6 +1,6 @@
 {
   "name": "glockit",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "A TypeScript library for benchmarking REST APIs with request chaining capabilities",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
