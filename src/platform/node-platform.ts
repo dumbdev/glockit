@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as createCsvWriter from 'csv-writer';
-import { Platform, BenchmarkResult } from './types';
+import { Platform, BenchmarkResult } from '../types';
 
 export class NodePlatform implements Platform {
   name = 'node';
@@ -36,6 +36,8 @@ export class NodePlatform implements Platform {
           { id: 'failedRequests', title: 'Failed' },
           { id: 'successRate', title: 'Success Rate' },
           { id: 'averageResponseTime', title: 'Avg Latency (ms)' },
+          { id: 'p95ResponseTime', title: 'P95 Latency (ms)' },
+          { id: 'p99ResponseTime', title: 'P99 Latency (ms)' },
           { id: 'minResponseTime', title: 'Min Latency (ms)' },
           { id: 'maxResponseTime', title: 'Max Latency (ms)' },
           { id: 'requestsPerSecond', title: 'RPS' },
@@ -53,6 +55,8 @@ export class NodePlatform implements Platform {
         failedRequests: r.failedRequests,
         successRate: (r.successRate * 100).toFixed(2) + '%',
         averageResponseTime: r.averageResponseTime.toFixed(2),
+        p95ResponseTime: r.responseTimePercentiles.p95.toFixed(2),
+        p99ResponseTime: r.responseTimePercentiles.p99.toFixed(2),
         minResponseTime: r.minResponseTime.toFixed(2),
         maxResponseTime: r.maxResponseTime.toFixed(2),
         requestsPerSecond: r.requestsPerSecond.toFixed(2),

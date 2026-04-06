@@ -1,4 +1,4 @@
-import { EndpointConfig, Platform } from './types';
+import { EndpointConfig, Platform } from '../types';
 
 const PROGRESS_BAR_LENGTH = 30;
 
@@ -54,7 +54,9 @@ export class ProgressTracker {
       this.completedEndpoints++;
       this.render();
     }
-    this.stop();
+    if (this.completedEndpoints >= this.totalEndpoints) {
+      this.stop();
+    }
   }
 
   private render(): void {
@@ -93,10 +95,6 @@ export class ProgressTracker {
   }
 
   public stop(): void {
-    // Cleanup if needed
-    if (this.platform.name === 'node') {
-        console.clear();
-    }
     console.log('Benchmark completed!');
   }
 }

@@ -1,4 +1,4 @@
-import { Platform, BenchmarkResult } from './types';
+import { Platform, BenchmarkResult } from '../types';
 
 export class BrowserPlatform implements Platform {
   name = 'browser';
@@ -25,13 +25,14 @@ export class BrowserPlatform implements Platform {
     if (csvPath) {
       const headers = [
         'Endpoint', 'URL', 'Method', 'Total', 'Success', 'Failed', 
-        'Success Rate', 'Avg Latency (ms)', 'Min Latency (ms)', 
+        'Success Rate', 'Avg Latency (ms)', 'P95 Latency (ms)', 'P99 Latency (ms)', 'Min Latency (ms)', 
         'Max Latency (ms)', 'RPS', 'Req Size (KB)', 'Res Size (KB)'
       ];
       
       const rows = results.results.map(r => [
         r.name, r.url, r.method, r.totalRequests, r.successfulRequests, r.failedRequests,
         (r.successRate * 100).toFixed(2) + '%', r.averageResponseTime.toFixed(2),
+        r.responseTimePercentiles.p95.toFixed(2), r.responseTimePercentiles.p99.toFixed(2),
         r.minResponseTime.toFixed(2), r.maxResponseTime.toFixed(2),
         r.requestsPerSecond.toFixed(2), r.totalRequestSizeKB.toFixed(2),
         r.totalResponseSizeKB.toFixed(2)
