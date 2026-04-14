@@ -1,6 +1,7 @@
 import axios from 'axios';
-import { ProgressTracker } from './progress';
-import { NodePlatform } from './node-platform';
+import chalk from 'chalk';
+import { ProgressTracker } from './platform/progress';
+import { NodePlatform } from './platform/node-platform';
 
 /**
  * Calculates the approximate size of an object in KB.
@@ -22,12 +23,78 @@ import {
   GlockitOptions,
   AssertionConfig,
   AuthDependencyConfig,
-  Platform
+  Platform,
+  ResponseTimePercentiles,
+  SloConfig,
+  SloEvaluation,
+  BenchmarkPhase,
+  EndpointPhaseResult,
+  DataFeederConfig,
+  LoadShapeConfig,
+  VirtualUserConfig,
+  TransactionGroupConfig,
+  TransactionGroupResult,
+  DiagnosticsConfig,
+  DiagnosticsSummary,
+  DiagnosticSample,
+  ReporterOutputConfig,
+  BenchmarkReporter,
+  DistributedConfig
 } from './types';
-const chalk = require('chalk/source');
 import { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+import { ObservabilityManager } from './observability/observability';
+import { DistributedCoordinator, mergeDistributedResults } from './distributed/distributed';
+import { generateHtmlReport, generateJunitReport } from './metrics/reporting';
+import {
+  applyCoordinatedOmissionCorrection as applyCoordinatedOmissionCorrectionUtil,
+  buildDiagnosticsSummary as buildDiagnosticsSummaryUtil,
+  buildTransactionGroupResults as buildTransactionGroupResultsUtil,
+  calculatePercentiles as calculatePercentilesUtil
+} from './metrics/analytics';
+import {
+  loadDataFeederRows,
+  parseCsvData as parseCsvDataUtil,
+  parseCsvRows as parseCsvRowsUtil
+} from './runtime/data-feeder';
+import {
+  applyLoadShape as applyLoadShapeUtil,
+  getEffectiveRequestDelayMs as getEffectiveRequestDelayMsUtil,
+  resolveCoordinatedOmissionSettings as resolveCoordinatedOmissionSettingsUtil,
+  selectWeightedScenario as selectWeightedScenarioUtil
+} from './runtime/traffic';
+import {
+  captureSetCookies as captureSetCookiesUtil,
+  createVirtualUserSession as createVirtualUserSessionUtil,
+  getCookieHeader as getCookieHeaderUtil,
+  resolveVirtualUserConfig as resolveVirtualUserConfigUtil,
+  VirtualUserSession
+} from './runtime/virtual-user';
+import {
+  buildEmptyWorkerResult,
+  buildNoAssignmentsWorkerResult,
+  buildWorkerRuntimeContext,
+  joinCoordinator,
+  postWorkerResultWithRetry,
+  startWorkerHeartbeatLoop
+} from './distributed/distributed-worker';
+import { runScenarioMix } from './runtime/scenario-mix';
+import { getExampleBenchmarkConfig } from './runtime/example-config';
+import { resolveEndpointDependencies } from './runtime/dependency-resolver';
+import { buildEndpointResult } from './metrics/endpoint-metrics';
+import { executeGrpcRequest, executeWebSocketRequest } from './runtime/request-engines';
 
-export { ProgressTracker } from './progress';
+export { ProgressTracker } from './platform/progress';
+
+const DEFAULT_MASK_KEYS = [
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'token',
+  'password',
+  'secret',
+  'apikey',
+  'x-api-key'
+];
 
 /**
  * Glockit is the main benchmarking engine for REST APIs.
@@ -40,6 +107,64 @@ export class Glockit {
   private axiosInstance: AxiosInstance;
   private authVariablesMap: Map<string, Map<string, any>> = new Map();
   private platform: Platform;
+  private dataFeedRows: Array<Record<string, any>> = [];
+  private dataFeederIndex = 0;
+  private dataFeederStrategy: 'sequential' | 'random' = 'sequential';
+  private reporters = new Map<string, BenchmarkReporter>();
+
+  public previewDataFeeder(dataFeeder: DataFeederConfig, limit: number = 5): Array<Record<string, any>> {
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 5;
+    this.initializeDataFeeder(dataFeeder);
+    return this.dataFeedRows.slice(0, safeLimit);
+  }
+
+  public registerReporter(name: string, reporter: BenchmarkReporter): void {
+    const normalizedName = name.trim().toLowerCase();
+    if (!normalizedName) {
+      throw new Error('Reporter name must be a non-empty string');
+    }
+    this.reporters.set(normalizedName, reporter);
+  }
+
+  private runHookInSandbox(
+    script: string,
+    context: Record<string, any>,
+    hookName: 'beforeRequest' | 'afterRequest',
+    endpointName: string
+  ): void {
+    if (this.platform.name !== 'node') {
+      throw new Error(`${hookName} is only supported on the node platform`);
+    }
+
+    const vm = require('node:vm') as typeof import('node:vm');
+    const sandbox = {
+      request: context.request,
+      response: context.response,
+      variables: context.variables,
+      Math,
+      Date,
+      JSON,
+      String,
+      Number,
+      Boolean,
+      Array,
+      Object,
+      RegExp
+    };
+
+    const vmContext = vm.createContext(sandbox, {
+      codeGeneration: {
+        strings: false,
+        wasm: false
+      }
+    });
+
+    const compiled = new vm.Script(`"use strict";\n${script}`, {
+      filename: `${endpointName}.${hookName}.hook.js`
+    });
+
+    compiled.runInContext(vmContext, { timeout: 1000 });
+  }
 
   constructor(options: GlockitOptions = {}) {
     this.options = {
@@ -83,6 +208,17 @@ export class Glockit {
     const showProgress = enableProgress !== undefined ? enableProgress : this.options.progress;
     // Validate configuration
     const validatedConfig = ConfigValidator.validate(config);
+
+    const distributedConfig = validatedConfig.global?.distributed;
+    if (distributedConfig?.enabled) {
+      if (distributedConfig.role === 'coordinator') {
+        return this.runDistributedCoordinator(validatedConfig, distributedConfig);
+      }
+      return this.runDistributedWorker(validatedConfig, distributedConfig);
+    }
+
+    const observabilityManager = new ObservabilityManager(this.platform.name);
+    await observabilityManager.initialize(validatedConfig.global?.observability);
     const startTime = this.platform.now();
     const results: EndpointResult[] = [];
 
@@ -104,6 +240,7 @@ export class Glockit {
 
     // Initial variables from global config if any (though not explicitly in types, good for future)
     this.variables.clear();
+    this.initializeDataFeeder(validatedConfig.global?.dataFeeder);
 
     // Determine if we should use weights
     const totalWeight = processedEndpoints.reduce((sum, e) => sum + (e.weight || 0), 0);
@@ -126,7 +263,11 @@ export class Glockit {
     }
 
     // Process each endpoint
-    for (const endpoint of processedEndpoints) {
+    if (validatedConfig.global?.scenarioMix?.enabled) {
+      const scenarioResults = await this.benchmarkScenarioMix(processedEndpoints, validatedConfig.global || {});
+      results.push(...scenarioResults);
+    } else {
+      for (const endpoint of processedEndpoints) {
       const endpointName = endpoint.name;
       if (this.progressTracker) {
         this.progressTracker.log(`🎯 Testing endpoint: ${endpointName}`);
@@ -181,8 +322,9 @@ export class Glockit {
         throw error;
       }
     }
+    }
 
-    const endTime = Date.now();
+    const endTime = this.platform.now();
     const totalDuration = endTime - startTime;
 
     const summary: BenchmarkSummary = {
@@ -191,20 +333,228 @@ export class Glockit {
       totalSuccessful: results.reduce((sum, r) => sum + r.successfulRequests, 0),
       totalFailed: results.reduce((sum, r) => sum + r.failedRequests, 0),
       overallRequestsPerSecond: 0,
-      averageResponseTime: 0
+      averageResponseTime: 0,
+      responseTimePercentiles: { p50: 0, p90: 0, p95: 0, p99: 0 },
+      errorRate: 0
     };
 
     if (summary.totalRequests > 0) {
       summary.overallRequestsPerSecond = summary.totalRequests / (totalDuration / 1000);
       summary.averageResponseTime = results.reduce((sum, r) => sum + (r.averageResponseTime * r.totalRequests), 0) / summary.totalRequests;
+      summary.errorRate = summary.totalFailed / summary.totalRequests;
+
+      const globalResponseTimes = results.flatMap(r =>
+        r.requestResults.filter(req => req.success).map(req => req.responseTime)
+      );
+
+      const coSettings = this.resolveCoordinatedOmissionSettings(validatedConfig.global, validatedConfig.global?.arrivalRate);
+      let responseTimesForPercentiles = globalResponseTimes;
+
+      if (coSettings.enabled && coSettings.expectedIntervalMs !== undefined) {
+        const corrected = this.applyCoordinatedOmissionCorrection(globalResponseTimes, coSettings.expectedIntervalMs);
+        responseTimesForPercentiles = corrected.values;
+        summary.coordinatedOmission = {
+          enabled: true,
+          expectedIntervalMs: coSettings.expectedIntervalMs,
+          appliedSamples: corrected.addedSamples
+        };
+      }
+
+      summary.responseTimePercentiles = this.calculatePercentiles(responseTimesForPercentiles);
     }
 
-    return {
+    if (validatedConfig.global?.slo) {
+      summary.slo = this.evaluateSlo(summary, validatedConfig.global.slo);
+    }
+
+    if (validatedConfig.global?.transactionGroups?.length) {
+      const coSettings = this.resolveCoordinatedOmissionSettings(validatedConfig.global, validatedConfig.global?.arrivalRate);
+      summary.transactionGroups = this.buildTransactionGroupResults(
+        validatedConfig.global.transactionGroups,
+        results,
+        totalDuration,
+        coSettings
+      );
+    }
+
+    if (validatedConfig.global?.diagnostics?.enabled) {
+      summary.diagnostics = this.buildDiagnosticsSummary(results, validatedConfig.global.diagnostics);
+    }
+
+    const benchmarkResult: BenchmarkResult = {
       config: validatedConfig,
       results,
       summary,
       timestamp: new Date().toISOString()
     };
+
+    benchmarkResult.observability = await observabilityManager.publish(benchmarkResult);
+
+    return benchmarkResult;
+  }
+
+  private async runDistributedCoordinator(
+    config: BenchmarkConfig,
+    distributedConfig: DistributedConfig
+  ): Promise<BenchmarkResult> {
+    if (this.platform.name !== 'node') {
+      throw new Error('distributed coordinator mode is only supported on the node platform');
+    }
+
+    const coordinator = new DistributedCoordinator(distributedConfig, config, this.platform);
+    return coordinator.run();
+  }
+
+  private async runDistributedWorker(
+    config: BenchmarkConfig,
+    distributedConfig: DistributedConfig
+  ): Promise<BenchmarkResult> {
+    if (this.platform.name !== 'node') {
+      throw new Error('distributed worker mode is only supported on the node platform');
+    }
+
+    const runtime = buildWorkerRuntimeContext(distributedConfig);
+    const {
+      coordinatorUrl,
+      workerId,
+      pollIntervalMs,
+      joinTimeoutMs,
+      heartbeatIntervalMs,
+      resultSubmitRetries,
+      resultSubmitBackoffMs,
+      authHeaders
+    } = runtime;
+
+    await joinCoordinator(coordinatorUrl, workerId, authHeaders);
+    this.platform.log(`🔗 Worker ${workerId} joined coordinator ${coordinatorUrl}`);
+
+    const heartbeat = startWorkerHeartbeatLoop(
+      coordinatorUrl,
+      workerId,
+      authHeaders,
+      heartbeatIntervalMs,
+      this.sleep.bind(this)
+    );
+
+    try {
+      const start = this.platform.now();
+      const localResults: BenchmarkResult[] = [];
+
+      while (true) {
+        const response = await axios.get(`${coordinatorUrl}/plan/${encodeURIComponent(workerId)}`, {
+          timeout: 15000,
+          headers: authHeaders
+        });
+
+        if (response.data?.done) {
+          break;
+        }
+
+        if (response.data?.ready) {
+          const plan = response.data;
+          const assignedEndpoints: string[] = Array.isArray(plan?.assignedEndpoints) ? plan.assignedEndpoints : [];
+          const workerConfig: BenchmarkConfig | undefined = plan?.config;
+
+          if (!workerConfig) {
+            throw new Error('Coordinator returned an invalid worker plan');
+          }
+
+          let workerResult: BenchmarkResult;
+          if (assignedEndpoints.length === 0 || workerConfig.endpoints.length === 0) {
+            workerResult = buildEmptyWorkerResult(workerConfig);
+          } else {
+            const workerBench = new Glockit({
+              ...this.options,
+              progress: this.options.progress
+            });
+            workerResult = await workerBench.run(workerConfig, this.options.progress);
+          }
+
+          workerResult.distributed = {
+            role: 'worker',
+            workerId,
+            coordinatorUrl,
+            assignedEndpoints
+          };
+
+          localResults.push(workerResult);
+
+          await postWorkerResultWithRetry({
+            coordinatorUrl,
+            workerId,
+            workerResult,
+            authHeaders,
+            timeoutMs: Math.max(30000, distributedConfig.resultTimeoutMs ?? 30000),
+            retries: resultSubmitRetries,
+            backoffMs: resultSubmitBackoffMs,
+            sleep: this.sleep.bind(this),
+            log: this.platform.log.bind(this.platform)
+          });
+
+          continue;
+        }
+
+        if (this.platform.now() - start > joinTimeoutMs) {
+          throw new Error('Timed out waiting for distributed worker plan from coordinator');
+        }
+
+        await this.sleep(pollIntervalMs);
+      }
+
+      if (localResults.length === 0) {
+        return buildNoAssignmentsWorkerResult(config, workerId, coordinatorUrl);
+      }
+
+      const mergedLocal = mergeDistributedResults(config, localResults);
+      mergedLocal.distributed = {
+        role: 'worker',
+        workerId,
+        coordinatorUrl,
+        assignedEndpoints: mergedLocal.results.map(endpoint => endpoint.name)
+      };
+
+      return mergedLocal;
+    } finally {
+      heartbeat.stop();
+    }
+  }
+
+  private async benchmarkScenarioMix(endpoints: EndpointConfig[], globalConfig: any): Promise<EndpointResult[]> {
+    const scenarioMix = globalConfig?.scenarioMix;
+    if (!scenarioMix?.enabled) {
+      return [];
+    }
+
+    if (this.progressTracker) {
+      this.progressTracker.log(`🎲 Scenario mix mode enabled (${scenarioMix.scenarios.length} scenarios)`);
+    }
+
+    return runScenarioMix(endpoints, globalConfig, {
+      now: this.platform.now.bind(this.platform),
+      resolveVirtualUserConfig: this.resolveVirtualUserConfig.bind(this),
+      createVirtualUserSession: this.createVirtualUserSession.bind(this),
+      selectWeightedScenario: this.selectWeightedScenario.bind(this),
+      handleAuthDependency: this.handleAuthDependency.bind(this),
+      authVariablesMap: this.authVariablesMap,
+      sharedVariables: this.variables,
+      applyNextDataFeederRow: this.applyNextDataFeederRow.bind(this),
+      makeRequest: this.makeRequest.bind(this),
+      extractVariables: this.extractVariables.bind(this),
+      resolveCoordinatedOmissionSettings: this.resolveCoordinatedOmissionSettings.bind(this),
+      applyCoordinatedOmissionCorrection: this.applyCoordinatedOmissionCorrection.bind(this),
+      calculatePercentiles: this.calculatePercentiles.bind(this),
+      onProgress: (endpointName, completed, total, scenarioName) => {
+        if (!this.progressTracker) {
+          return;
+        }
+        this.progressTracker.updateEndpointProgress(
+          endpointName,
+          completed,
+          total,
+          `Scenario: ${scenarioName}`
+        );
+      }
+    });
   }
 
   /**
@@ -212,119 +562,14 @@ export class Glockit {
    * @returns BenchmarkConfig example.
    */
   public static generateExampleConfig(): BenchmarkConfig {
-    return {
-      name: "E-Commerce API Benchmark",
-      global: {
-        baseUrl: "https://api.example.com/v1",
-        maxRequests: 100,
-        concurrent: 10,
-        timeout: 5000,
-        requestDelay: 100,
-        summaryOnly: false,
-        headers: {
-          "Content-Type": "application/json",
-          "X-Environment": "{{$env.NODE_ENV}}"
-        }
-      },
-      endpoints: [
-        {
-          name: "Get User Profile",
-          url: "/user/profile/{{$uuid}}",
-          method: "GET",
-          weight: 8,
-          auth: {
-            name: "UserAuth",
-            endpoints: [
-              {
-                name: "Login",
-                url: "/auth/login",
-                method: "POST",
-                body: {
-                  "username": "testuser",
-                  "password": "testpassword"
-                },
-                variables: [
-                  {
-                    "name": "authToken",
-                    "path": "token",
-                    "from": "response"
-                  }
-                ]
-              }
-            ]
-          },
-          headers: {
-            "Authorization": "Bearer {{authToken}}"
-          },
-          query: {
-            "fields": "id,name,email",
-            "timestamp": "{{$randomInt(1000000, 2000000)}}"
-          },
-          responseCheck: [
-            {
-              "path": "id",
-              "operator": "exists"
-            }
-          ],
-          assertions: [
-            {
-              "path": "status",
-              "operator": "equals",
-              "value": 200
-            }
-          ],
-          retries: 2,
-          beforeRequest: "request.headers['X-Request-ID'] = 'req-' + Math.random().toString(36).substr(2, 9);"
-        },
-        {
-          name: "Search Items",
-          url: "/items/search",
-          method: "GET",
-          weight: 2,
-          query: {
-            "q": "{{$randomFrom('phone', 'laptop', 'tablet')}}",
-            "limit": 10
-          },
-          afterRequest: "if (response.status === 200) { console.log('Search successful'); }"
-        }
-      ]
-    };
+    return getExampleBenchmarkConfig();
   }
 
   /**
    * Resolves endpoint dependencies to determine execution order.
    */
   private resolveDependencies(endpoints: EndpointConfig[]): EndpointConfig[] {
-    const resolved: EndpointConfig[] = [];
-    const remaining = [...endpoints];
-
-    while (remaining.length > 0) {
-      const before = remaining.length;
-      
-      for (let i = remaining.length - 1; i >= 0; i--) {
-        const endpoint = remaining[i];
-        const dependencies = endpoint.dependencies || [];
-        
-        // Check if all dependencies are resolved
-        const allDepsResolved = dependencies.every(dep => 
-          resolved.some(r => r.name === dep)
-        );
-        
-        if (allDepsResolved) {
-          resolved.push(endpoint);
-          remaining.splice(i, 1);
-        }
-      }
-      
-      // Prevent infinite loop if there are circular dependencies
-      if (remaining.length === before) {
-        console.warn(`⚠️  Possible circular dependencies detected. Processing remaining endpoints in order.`);
-        resolved.push(...remaining);
-        break;
-      }
-    }
-
-    return resolved;
+    return resolveEndpointDependencies(endpoints);
   }
 
   /**
@@ -334,12 +579,16 @@ export class Glockit {
    * @returns EndpointResult with statistics for the endpoint.
    */
   private async benchmarkEndpoint(endpoint: EndpointConfig, globalConfig: any = {}): Promise<EndpointResult> {
-    const maxRequests = endpoint.maxRequests || globalConfig?.maxRequests || 10;
     const duration = globalConfig?.duration; // Duration in milliseconds
-    const throttle = endpoint.throttle || globalConfig?.throttle || 0;
-    const concurrent = Math.min(globalConfig?.concurrent || 1, maxRequests);
+    const hasTimedMode = (duration && duration > 0) || (Array.isArray(globalConfig?.phases) && globalConfig.phases.length > 0);
+    const maxRequests = endpoint.maxRequests ?? globalConfig?.maxRequests ?? (hasTimedMode ? Number.MAX_SAFE_INTEGER : 10);
+    const concurrent = globalConfig?.concurrent || 1;
+    const executor: 'concurrency' | 'arrival-rate' = globalConfig?.executor || 'concurrency';
+    const globalArrivalRate: number | undefined = globalConfig?.arrivalRate;
+    const globalLoadShape = globalConfig?.loadShape;
     const timeout = globalConfig?.timeout || 15000;
     const baseUrl = globalConfig?.baseUrl;
+    const virtualUsersConfig = this.resolveVirtualUserConfig(globalConfig?.virtualUsers);
     // Use endpoint-specific delay if set, otherwise use global delay or default to 0
     const requestDelay = Math.max(
       endpoint.requestDelay ?? globalConfig?.requestDelay ?? 0,
@@ -353,8 +602,10 @@ export class Glockit {
 
     // Ensure we don't have more concurrent requests than max requests
     const effectiveConcurrent = Math.min(concurrent, maxRequests);
+    const phases: BenchmarkPhase[] = Array.isArray(globalConfig?.phases) ? globalConfig.phases : [];
+    const phaseResults: EndpointPhaseResult[] = [];
 
-    const startTime = Date.now();
+    const startTime = this.platform.now();
     const results: RequestResult[] = [];
     const summaryOnly = globalConfig?.summaryOnly === true;
     
@@ -370,20 +621,20 @@ export class Glockit {
     const errors: string[] = [];
     const endpointName = endpoint.name;
 
-    // Determine execution mode: duration-based or request-count-based
+    // Determine execution mode: duration-based, phase-based or request-count-based
     const useDuration = duration && duration > 0;
+    const usePhases = phases.length > 0;
     const currentCount = () => summaryOnly ? (successfulRequests + failedRequests) : results.length;
     const shouldContinue = useDuration 
-      ? () => (Date.now() - startTime) < duration 
+      ? () => (this.platform.now() - startTime) < duration 
       : () => currentCount() < maxRequests;
 
-    let requestCounter = 0;
-    let lastUpdateTime = Date.now();
+    let lastUpdateTime = this.platform.now();
     const updateInterval = 100; // Update progress every 100ms
 
     // Function to update progress
     const updateProgress = (status: string) => {
-      const now = Date.now();
+        const now = this.platform.now();
       if (now - lastUpdateTime >= updateInterval || 
           status.includes('Completed') || 
           status.includes('Error') || 
@@ -391,7 +642,7 @@ export class Glockit {
         if (this.progressTracker) {
           // Ensure we don't exceed maxRequests
           const current = Math.min(currentCount(), maxRequests);
-          const total = useDuration ? maxRequests : maxRequests;
+          const total = maxRequests === Number.MAX_SAFE_INTEGER ? Math.max(current, 1) : maxRequests;
           
           // Update the specific endpoint progress
           this.progressTracker.updateEndpointProgress(
@@ -418,30 +669,40 @@ export class Glockit {
       await new Promise(resolve => setImmediate(resolve));
     }
     
-    let lastRequestTime = 0;
-    
-    const executeRequest = async () => {
-      while (shouldContinue()) {
+    const executeRequest = async (
+      workerId: number,
+      shouldRun: () => boolean,
+      throttleMs: number,
+      resolveRequestDelayMs: () => number,
+      statusPrefix?: string
+    ) => {
+      let lastRequestTime = 0;
+      const session = virtualUsersConfig.sessionScope ? this.createVirtualUserSession(`${endpointName}-${workerId}`) : undefined;
+
+      while (shouldRun()) {
         try {
           // Calculate time since last request
-          const now = Date.now();
+          const now = this.platform.now();
           const timeSinceLastRequest = now - lastRequestTime;
           
           // Apply request delay if needed
-          const delay = this.options.delay || 0;
+          const delay = resolveRequestDelayMs();
           if (delay > 0 && timeSinceLastRequest < delay) {
             const delayNeeded = delay - timeSinceLastRequest;
             await this.sleep(delayNeeded);
           }
           
           // Update last request time before making the request
-          lastRequestTime = Date.now();
+          lastRequestTime = this.platform.now();
+
+          // Apply optional feeder row values before each request.
+          this.applyNextDataFeederRow(session?.variables);
           
-          const result = await this.makeRequest(endpoint, timeout, baseUrl);
+          const result = await this.makeRequest(endpoint, timeout, baseUrl, session, virtualUsersConfig, globalConfig?.diagnostics);
 
           // Extract variables if this request was successful and has variables to extract
           if (result.success && endpoint.variables?.length) {
-            this.extractVariables(endpoint.variables, result.data, result.headers);
+            this.extractVariables(endpoint.variables, result.data, result.headers, session?.variables);
           }
 
           if (summaryOnly) {
@@ -462,7 +723,9 @@ export class Glockit {
             results.push(result);
           }
 
-          updateProgress(`Running: ${currentCount()}${useDuration ? '' : `/${maxRequests}`}`);
+          const timedMode = useDuration || usePhases;
+          const progressLabel = timedMode ? `${currentCount()}` : `${currentCount()}/${maxRequests}`;
+          updateProgress(`${statusPrefix ? `${statusPrefix} ` : ''}Running: ${progressLabel}`);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
           if (summaryOnly) {
@@ -482,83 +745,120 @@ export class Glockit {
         }
         
         // Apply throttling between requests if configured
-        if (throttle > 0) {
-          await this.sleep(throttle);
+        if (throttleMs > 0) {
+          await this.sleep(throttleMs);
         }
       }
     };
 
-    // Create concurrent request executors
-    const requestPromises = [];
-    for (let i = 0; i < effectiveConcurrent; i++) {
-      requestPromises.push(executeRequest());
+    if (usePhases) {
+      for (const phase of phases) {
+        if (currentCount() >= maxRequests) {
+          break;
+        }
+
+        const phaseConcurrent = Math.min(
+          phase.concurrent ?? effectiveConcurrent,
+          Math.max(1, maxRequests - currentCount())
+        );
+        const phaseThrottle = phase.throttle ?? endpoint.throttle ?? globalConfig?.throttle ?? 0;
+        const phaseConfiguredDelay = Math.max(
+          phase.requestDelay ?? endpoint.requestDelay ?? globalConfig?.requestDelay ?? 0,
+          this.options.delay ?? 0
+        );
+        const phaseArrivalRate = phase.arrivalRate ?? globalArrivalRate;
+        const phaseLoadShape = phase.loadShape ?? globalLoadShape;
+        const phaseEndTime = this.platform.now() + phase.duration;
+        const phaseStartTime = this.platform.now();
+        const beforeTotal = currentCount();
+        const beforeSuccess = successfulRequests;
+        const beforeFailed = failedRequests;
+
+        if (this.progressTracker) {
+          this.progressTracker.log(`🧭 Phase "${phase.name}" started (${phase.duration}ms, c=${phaseConcurrent})`);
+        }
+
+        const phaseShouldContinue = () => this.platform.now() < phaseEndTime && currentCount() < maxRequests;
+        const phaseDelayResolver = () => {
+          const elapsedMs = this.platform.now() - phaseStartTime;
+          const effectiveArrivalRate = this.applyLoadShape(phaseArrivalRate, phaseLoadShape, elapsedMs);
+          return this.getEffectiveRequestDelayMs(
+            phaseConfiguredDelay,
+            executor,
+            effectiveArrivalRate,
+            phaseConcurrent
+          );
+        };
+        const phaseWorkers: Promise<void>[] = [];
+
+        for (let i = 0; i < phaseConcurrent; i++) {
+          phaseWorkers.push(executeRequest(i, phaseShouldContinue, phaseThrottle, phaseDelayResolver, `[${phase.name}]`));
+        }
+
+        await Promise.all(phaseWorkers);
+
+        const phaseElapsed = this.platform.now() - phaseStartTime;
+        const phaseTotalRequests = currentCount() - beforeTotal;
+        const phaseSuccessfulRequests = successfulRequests - beforeSuccess;
+        const phaseFailedRequests = failedRequests - beforeFailed;
+        const phaseRps = phaseElapsed > 0 ? phaseTotalRequests / (phaseElapsed / 1000) : 0;
+
+        phaseResults.push({
+          name: phase.name,
+          durationMs: phaseElapsed,
+          totalRequests: phaseTotalRequests,
+          successfulRequests: phaseSuccessfulRequests,
+          failedRequests: phaseFailedRequests,
+          requestsPerSecond: phaseRps
+        });
+      }
+    } else {
+      const baseThrottle = endpoint.throttle ?? globalConfig?.throttle ?? 0;
+      const baseStartTime = this.platform.now();
+      const baseDelayResolver = () => {
+        const elapsedMs = this.platform.now() - baseStartTime;
+        const effectiveArrivalRate = this.applyLoadShape(globalArrivalRate, globalLoadShape, elapsedMs);
+        return this.getEffectiveRequestDelayMs(
+          requestDelay,
+          executor,
+          effectiveArrivalRate,
+          effectiveConcurrent
+        );
+      };
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < effectiveConcurrent; i++) {
+        workers.push(executeRequest(i, shouldContinue, baseThrottle, baseDelayResolver));
+      }
+      await Promise.all(workers);
     }
     
-    // Wait for all concurrent requests to complete
-    await Promise.all(requestPromises);
-    
-    const endTime = Date.now();
+    const endTime = this.platform.now();
     const totalElapsedTime = endTime - startTime;
 
-    // Use summary variables if summaryOnly is true
-    let totalRequestsCount = 0;
-    let finalSuccessfulRequests = 0;
-    let finalFailedRequests = 0;
-    let finalTotalResponseTime = 0;
-    let finalMinResponseTime = 0;
-    let finalMaxResponseTime = 0;
-    let finalTotalRequestSizeKB = 0;
-    let finalTotalResponseSizeKB = 0;
+    const endpointResult = buildEndpointResult({
+      endpoint,
+      summaryOnly,
+      results,
+      successfulRequests,
+      failedRequests,
+      totalResponseTime,
+      minResponseTime,
+      maxResponseTime,
+      totalRequestSizeKB,
+      totalResponseSizeKB,
+      errors,
+      phaseResults,
+      totalElapsedTime,
+      globalConfig,
+      globalArrivalRate,
+      resolveCoordinatedOmissionSettings: this.resolveCoordinatedOmissionSettings.bind(this),
+      applyCoordinatedOmissionCorrection: this.applyCoordinatedOmissionCorrection.bind(this),
+      calculatePercentiles: this.calculatePercentiles.bind(this)
+    });
 
-    if (summaryOnly) {
-      totalRequestsCount = successfulRequests + failedRequests;
-      finalSuccessfulRequests = successfulRequests;
-      finalFailedRequests = failedRequests;
-      finalTotalResponseTime = totalResponseTime;
-      finalMinResponseTime = minResponseTime === Infinity ? 0 : minResponseTime;
-      finalMaxResponseTime = maxResponseTime;
-      finalTotalRequestSizeKB = totalRequestSizeKB;
-      finalTotalResponseSizeKB = totalResponseSizeKB;
-    } else {
-      const successfulResults = results.filter(r => r.success);
-      const responseTimes = results.map(r => r.responseTime).filter(rt => rt > 0);
-      
-      totalRequestsCount = results.length;
-      finalSuccessfulRequests = successfulResults.length;
-      finalFailedRequests = totalRequestsCount - finalSuccessfulRequests;
-      finalTotalResponseTime = responseTimes.reduce((sum, rt) => sum + rt, 0);
-      finalMinResponseTime = responseTimes.length > 0 ? Math.min(...responseTimes) : 0;
-      finalMaxResponseTime = responseTimes.length > 0 ? Math.max(...responseTimes) : 0;
-      finalTotalRequestSizeKB = results.reduce((sum, r) => sum + (r.requestSizeKB || 0), 0);
-      finalTotalResponseSizeKB = results.reduce((sum, r) => sum + (r.responseSizeKB || 0), 0);
-    }
-    
-    const successRate = totalRequestsCount > 0 ? finalSuccessfulRequests / totalRequestsCount : 0;
-    const averageResponseTime = finalSuccessfulRequests > 0 ? finalTotalResponseTime / finalSuccessfulRequests : 0;
-    
-    // Calculate requests per second
-    const requestsPerSecond = totalElapsedTime > 0 ? (totalRequestsCount / (totalElapsedTime / 1000)) : 0;
-    
-    // Create the result object
-    const endpointResult: EndpointResult = {
-      name: endpoint.name,
-      url: endpoint.url,
-      method: endpoint.method,
-      totalRequests: totalRequestsCount,
-      successfulRequests: finalSuccessfulRequests,
-      failedRequests: finalFailedRequests,
-      successRate,
-      averageResponseTime,
-      minResponseTime: finalMinResponseTime,
-      maxResponseTime: finalMaxResponseTime,
-      requestsPerSecond,
-      errors: [...new Set(errors)], // Unique errors
-      requestResults: results,
-      totalRequestSizeKB: finalTotalRequestSizeKB,
-      averageRequestSizeKB: totalRequestsCount > 0 ? finalTotalRequestSizeKB / totalRequestsCount : 0,
-      totalResponseSizeKB: finalTotalResponseSizeKB,
-      averageResponseSizeKB: totalRequestsCount > 0 ? finalTotalResponseSizeKB / totalRequestsCount : 0
-    };
+    const totalRequestsCount = endpointResult.totalRequests;
+    const finalSuccessfulRequests = endpointResult.successfulRequests;
+    const finalFailedRequests = endpointResult.failedRequests;
     
     // Final progress update
     updateProgress(`Completed ${totalRequestsCount} requests (${finalSuccessfulRequests} successful, ${finalFailedRequests} failed)`);
@@ -605,7 +905,14 @@ export class Glockit {
    * @param baseUrl Base URL from global config.
    * @returns RequestResult with response data and timing.
    */
-  private async makeRequest(endpoint: EndpointConfig, timeout: number, baseUrl?: string): Promise<RequestResult> {
+  private async makeRequest(
+    endpoint: EndpointConfig,
+    timeout: number,
+    baseUrl?: string,
+    session?: VirtualUserSession,
+    virtualUsersConfig?: VirtualUserConfig,
+    diagnosticsConfig?: DiagnosticsConfig
+  ): Promise<RequestResult> {
     const retries = endpoint.retries || 0;
     let attempt = 0;
     let lastResult: RequestResult | undefined;
@@ -618,7 +925,7 @@ export class Glockit {
         await this.sleep(backoff);
       }
 
-      lastResult = await this.executeSingleRequest(endpoint, timeout, baseUrl);
+      lastResult = await this.executeSingleRequest(endpoint, timeout, baseUrl, session, virtualUsersConfig, diagnosticsConfig);
       
       // Check assertions if any
       if (lastResult.success && endpoint.assertions && endpoint.assertions.length > 0) {
@@ -648,7 +955,14 @@ export class Glockit {
   /**
    * Executes a single HTTP request.
    */
-  private async executeSingleRequest(endpoint: EndpointConfig, timeout: number, baseUrl?: string): Promise<RequestResult> {
+  private async executeSingleRequest(
+    endpoint: EndpointConfig,
+    timeout: number,
+    baseUrl?: string,
+    session?: VirtualUserSession,
+    virtualUsersConfig?: VirtualUserConfig,
+    diagnosticsConfig?: DiagnosticsConfig
+  ): Promise<RequestResult> {
     const startTime = process.hrtime();
     let statusCode: number | undefined;
     let error: string | undefined;
@@ -670,18 +984,24 @@ export class Glockit {
         statusCode: 200,
         data: { message: "Dry run: No actual request made" },
         headers: {},
+        requestUrl: endpoint.url,
+        requestMethod: endpoint.method,
         requestSizeKB: 0,
         responseSizeKB: 0
       };
     }
 
     try {
+      const transport = endpoint.transport || 'http';
+
       // Build the full URL using baseUrl from global config
-      let url = this.buildFullUrl(this.replaceVariables(endpoint.url), baseUrl);
+      let url = transport === 'grpc'
+        ? this.replaceVariables(endpoint.url, session?.variables)
+        : this.buildFullUrl(this.replaceVariables(endpoint.url, session?.variables), baseUrl);
       
       // Append query parameters if present
-      if (endpoint.query) {
-        const queryParams = this.replaceVariablesInObject(endpoint.query);
+      if (endpoint.query && transport !== 'grpc') {
+        const queryParams = this.replaceVariablesInObject(endpoint.query, session?.variables);
         const urlObj = new URL(url);
         Object.entries(queryParams).forEach(([key, value]) => {
           urlObj.searchParams.append(key, String(value));
@@ -691,15 +1011,19 @@ export class Glockit {
 
       const headers = {
         ...this.options.headers,
-        ...this.replaceVariablesInObject(endpoint.headers || {})
+        ...this.replaceVariablesInObject(endpoint.headers || {}, session?.variables)
       };
+      const cookieHeader = this.getCookieHeader(session, virtualUsersConfig);
+      if (cookieHeader) {
+        headers.Cookie = cookieHeader;
+      }
       let body = endpoint.body;
 
       // Replace variables in the request body if it's an object
       if (body && typeof body === 'object') {
-        body = this.replaceVariablesInObject(body);
+        body = this.replaceVariablesInObject(body, session?.variables);
       } else if (typeof body === 'string') {
-        body = this.replaceVariables(body);
+        body = this.replaceVariables(body, session?.variables);
       }
 
       // Calculate request size in KB
@@ -708,7 +1032,6 @@ export class Glockit {
       // --- BEFORE REQUEST HOOK ---
       if (endpoint.beforeRequest) {
         try {
-          // Create a restricted context for the hook
           const hookContext = {
             request: {
               url,
@@ -716,18 +1039,10 @@ export class Glockit {
               headers,
               body
             },
-            variables: Object.fromEntries(this.variables)
+            variables: Object.fromEntries(session?.variables || this.variables)
           };
-          
-          // Use Function constructor to evaluate the hook
-          // WARNING: This allows arbitrary JS execution. 
-          // In a real library, this should be clearly documented.
-          const hookFn = new Function('context', `
-            with (context) {
-              ${endpoint.beforeRequest}
-            }
-          `);
-          hookFn(hookContext);
+
+          this.runHookInSandbox(endpoint.beforeRequest, hookContext, 'beforeRequest', endpointName);
           
           // Update request with potentially modified values from the hook
           url = hookContext.request.url;
@@ -745,39 +1060,43 @@ export class Glockit {
       }
 
       // Make the request
-      const response = await this.axiosInstance({
-        method: endpoint.method || 'GET',
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        data: body,
-        timeout,
-        validateStatus: () => true, // Don't throw on HTTP error status
-        onUploadProgress: (progressEvent) => {
-          if (this.progressTracker && progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            this.progressTracker.updateRequestProgress(
-              endpointName,
-              progressEvent.loaded,
-              progressEvent.total,
-              `Uploading: ${percent}%`
-            );
+      const response = transport === 'http'
+        ? await this.axiosInstance({
+          method: endpoint.method || 'GET',
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+            ...headers,
+          },
+          data: body,
+          timeout,
+          validateStatus: () => true, // Don't throw on HTTP error status
+          onUploadProgress: (progressEvent) => {
+            if (this.progressTracker && progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this.progressTracker.updateRequestProgress(
+                endpointName,
+                progressEvent.loaded,
+                progressEvent.total,
+                `Uploading: ${percent}%`
+              );
+            }
+          },
+          onDownloadProgress: (progressEvent) => {
+            if (this.progressTracker && progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              this.progressTracker.updateRequestProgress(
+                endpointName,
+                progressEvent.loaded,
+                progressEvent.total,
+                `Downloading: ${percent}%`
+              );
+            }
           }
-        },
-        onDownloadProgress: (progressEvent) => {
-          if (this.progressTracker && progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            this.progressTracker.updateRequestProgress(
-              endpointName,
-              progressEvent.loaded,
-              progressEvent.total,
-              `Downloading: ${percent}%`
-            );
-          }
-        }
-      });
+        })
+        : transport === 'websocket'
+          ? await executeWebSocketRequest({ endpoint, url, headers, body, timeout })
+          : await executeGrpcRequest({ endpoint, url, headers, body, timeout });
 
       const [seconds, nanoseconds] = process.hrtime(startTime);
       const responseTime = (seconds * 1000) + (nanoseconds / 1e6);
@@ -791,15 +1110,10 @@ export class Glockit {
               status: response.status,
               headers: response.headers
             },
-            variables: Object.fromEntries(this.variables)
+            variables: Object.fromEntries(session?.variables || this.variables)
           };
-          
-          const hookFn = new Function('context', `
-            with (context) {
-              ${endpoint.afterRequest}
-            }
-          `);
-          hookFn(hookContext);
+
+          this.runHookInSandbox(endpoint.afterRequest, hookContext, 'afterRequest', endpointName);
           
           // Allow the hook to modify data or status
           response.data = hookContext.response.data;
@@ -808,13 +1122,19 @@ export class Glockit {
           
           // Allow the hook to update variables directly
           for (const [key, value] of Object.entries(hookContext.variables)) {
-            this.variables.set(key, value);
+            if (session) {
+              session.variables.set(key, value);
+            } else {
+              this.variables.set(key, value);
+            }
           }
         } catch (hookError) {
           console.error(`Error in afterRequest hook for endpoint "${endpointName}":`, hookError);
         }
       }
       // ---------------------------
+
+      this.captureSetCookies(response.headers, session, virtualUsersConfig);
 
       // Calculate response size in KB
       let responseSizeKB = 0;
@@ -847,6 +1167,10 @@ export class Glockit {
         statusCode,
         data,
         headers: responseHeaders,
+        requestUrl: diagnosticsConfig?.enabled ? url : undefined,
+        requestMethod: diagnosticsConfig?.enabled ? (endpoint.method || 'GET') : undefined,
+        requestHeaders: diagnosticsConfig?.enabled ? headers : undefined,
+        requestBody: diagnosticsConfig?.enabled ? body : undefined,
         requestSizeKB: parseFloat(requestSizeKB.toFixed(6)), // Round to 6 decimal places
         responseSizeKB: parseFloat(responseSizeKB.toFixed(6))
       };
@@ -859,6 +1183,14 @@ export class Glockit {
         responseTime,
         error: error instanceof Error ? error.message : 'Unknown error',
         statusCode: (error as any)?.response?.status,
+        requestUrl: diagnosticsConfig?.enabled ? endpoint.url : undefined,
+        requestMethod: diagnosticsConfig?.enabled ? (endpoint.method || 'GET') : undefined,
+        requestHeaders: diagnosticsConfig?.enabled
+          ? this.replaceVariablesInObject({ ...(this.options.headers || {}), ...(endpoint.headers || {}) }, session?.variables)
+          : undefined,
+        requestBody: diagnosticsConfig?.enabled
+          ? this.replaceVariablesInObject(endpoint.body, session?.variables)
+          : undefined,
         requestSizeKB: parseFloat(requestSizeKB.toFixed(6)),
         responseSizeKB: 0
       };
@@ -870,7 +1202,10 @@ export class Glockit {
    */
   private checkAssertions(assertions: AssertionConfig[], data: any, headers: any): { success: boolean; message: string }[] {
     return assertions.map(assertion => {
-      const actualValue = this.getValueByPath(data, assertion.path) || headers[assertion.path] || headers[assertion.path.toLowerCase()];
+      const safeHeaders = headers || {};
+      const actualValue = this.getValueByPath(data, assertion.path)
+        ?? safeHeaders[assertion.path]
+        ?? safeHeaders[assertion.path.toLowerCase()];
       let success = false;
       let message = '';
 
@@ -903,8 +1238,14 @@ export class Glockit {
    * @param responseData Response data object.
    * @param headers Response headers.
    */
-  private extractVariables(extractions: any[], responseData: any, headers: any): Record<string, any> {
+  private extractVariables(
+    extractions: any[],
+    responseData: any,
+    headers: any,
+    variableScope?: Map<string, any>
+  ): Record<string, any> {
     const extractedResults: Record<string, any> = {};
+    const scopedVariables = variableScope || this.variables;
     for (const extraction of extractions) {
       try {
         let value;
@@ -928,7 +1269,7 @@ export class Glockit {
         }
         
         if (value !== undefined) {
-          this.variables.set(extraction.name, value);
+          scopedVariables.set(extraction.name, value);
           extractedResults[extraction.name] = value;
           // Security fix: Don't log potentially sensitive variable values
           const sanitizedValue = this.sanitizeForLogging(value, extraction.name);
@@ -963,7 +1304,7 @@ export class Glockit {
    * @param text Text containing placeholders.
    * @returns Text with placeholders replaced.
    */
-  private replaceVariables(text: string): string {
+  private replaceVariables(text: string, variableScope?: Map<string, any>): string {
     if (!text) return text;
     
     let result = text;
@@ -974,7 +1315,8 @@ export class Glockit {
     });
 
     // Replace custom variables
-    for (const [key, value] of this.variables) {
+    const scopedVariables = variableScope || this.variables;
+    for (const [key, value] of scopedVariables) {
       result = result.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
     }
 
@@ -1018,14 +1360,14 @@ export class Glockit {
    * @param obj Input object, array, or string.
    * @returns Object/array/string with variables replaced.
    */
-  private replaceVariablesInObject(obj: any): any {
+  private replaceVariablesInObject(obj: any, variableScope?: Map<string, any>): any {
     if (!obj) return obj;
-    if (typeof obj === 'string') return this.replaceVariables(obj);
-    if (Array.isArray(obj)) return obj.map(item => this.replaceVariablesInObject(item));
+    if (typeof obj === 'string') return this.replaceVariables(obj, variableScope);
+    if (Array.isArray(obj)) return obj.map(item => this.replaceVariablesInObject(item, variableScope));
     if (typeof obj === 'object') {
       const result: any = {};
       for (const [key, value] of Object.entries(obj)) {
-        result[key] = this.replaceVariablesInObject(value);
+        result[key] = this.replaceVariablesInObject(value, variableScope);
       }
       return result;
     }
@@ -1073,6 +1415,145 @@ export class Glockit {
     return value;
   }
 
+  private initializeDataFeeder(dataFeeder?: DataFeederConfig): void {
+    this.dataFeedRows = [];
+    this.dataFeederIndex = 0;
+    this.dataFeederStrategy = dataFeeder?.strategy || 'sequential';
+
+    if (!dataFeeder) {
+      return;
+    }
+
+    this.dataFeedRows = loadDataFeederRows(dataFeeder, this.platform.name);
+
+    if (this.progressTracker) {
+      this.progressTracker.log(`📦 Loaded data feeder rows: ${this.dataFeedRows.length}`);
+    }
+  }
+
+  private parseCsvData(raw: string): Array<Record<string, any>> {
+    return parseCsvDataUtil(raw);
+  }
+
+  private parseCsvRows(raw: string): string[][] {
+    return parseCsvRowsUtil(raw);
+  }
+
+  private applyNextDataFeederRow(variableScope?: Map<string, any>): void {
+    if (!this.dataFeedRows.length) {
+      return;
+    }
+
+    const index = this.dataFeederStrategy === 'random'
+      ? Math.floor(Math.random() * this.dataFeedRows.length)
+      : (this.dataFeederIndex++ % this.dataFeedRows.length);
+
+    const row = this.dataFeedRows[index];
+    const scopedVariables = variableScope || this.variables;
+    scopedVariables.set('feederRow', row);
+
+    for (const [key, value] of Object.entries(row)) {
+      scopedVariables.set(key, value);
+    }
+  }
+
+  private resolveVirtualUserConfig(config?: VirtualUserConfig): Required<VirtualUserConfig> {
+    return resolveVirtualUserConfigUtil(config);
+  }
+
+  private createVirtualUserSession(id: string): VirtualUserSession {
+    return createVirtualUserSessionUtil(id, this.variables);
+  }
+
+  private getCookieHeader(session: VirtualUserSession | undefined, virtualUsersConfig?: VirtualUserConfig): string | undefined {
+    return getCookieHeaderUtil(session, virtualUsersConfig);
+  }
+
+  private captureSetCookies(headers: any, session: VirtualUserSession | undefined, virtualUsersConfig?: VirtualUserConfig): void {
+    captureSetCookiesUtil(headers, session, virtualUsersConfig);
+  }
+
+  private getEffectiveRequestDelayMs(
+    configuredDelayMs: number,
+    executor: 'concurrency' | 'arrival-rate',
+    arrivalRate: number | undefined,
+    workerCount: number
+  ): number {
+    return getEffectiveRequestDelayMsUtil(configuredDelayMs, executor, arrivalRate, workerCount);
+  }
+
+  private applyLoadShape(
+    baseArrivalRate: number | undefined,
+    loadShape: LoadShapeConfig | undefined,
+    elapsedMs: number
+  ): number | undefined {
+    return applyLoadShapeUtil(baseArrivalRate, loadShape, elapsedMs);
+  }
+
+  private selectWeightedScenario(scenarios: Array<{ name: string; weight?: number; flow: string[] }>) {
+    return selectWeightedScenarioUtil(scenarios);
+  }
+
+  private resolveCoordinatedOmissionSettings(
+    globalConfig: any,
+    arrivalRate?: number
+  ): { enabled: boolean; expectedIntervalMs?: number } {
+    return resolveCoordinatedOmissionSettingsUtil(globalConfig, arrivalRate);
+  }
+
+  private applyCoordinatedOmissionCorrection(
+    values: number[],
+    expectedIntervalMs: number
+  ): { values: number[]; addedSamples: number } {
+    return applyCoordinatedOmissionCorrectionUtil(values, expectedIntervalMs);
+  }
+
+  private calculatePercentiles(values: number[]): ResponseTimePercentiles {
+    return calculatePercentilesUtil(values);
+  }
+
+  private evaluateSlo(summary: BenchmarkSummary, slo: SloConfig): SloEvaluation {
+    const failures: string[] = [];
+
+    if (slo.maxErrorRate !== undefined && summary.errorRate > slo.maxErrorRate) {
+      failures.push(`errorRate ${summary.errorRate.toFixed(4)} > ${slo.maxErrorRate}`);
+    }
+
+    if (slo.maxAvgResponseTimeMs !== undefined && summary.averageResponseTime > slo.maxAvgResponseTimeMs) {
+      failures.push(`avgResponseTime ${summary.averageResponseTime.toFixed(2)}ms > ${slo.maxAvgResponseTimeMs}ms`);
+    }
+
+    if (slo.p95Ms !== undefined && summary.responseTimePercentiles.p95 > slo.p95Ms) {
+      failures.push(`p95 ${summary.responseTimePercentiles.p95.toFixed(2)}ms > ${slo.p95Ms}ms`);
+    }
+
+    if (slo.p99Ms !== undefined && summary.responseTimePercentiles.p99 > slo.p99Ms) {
+      failures.push(`p99 ${summary.responseTimePercentiles.p99.toFixed(2)}ms > ${slo.p99Ms}ms`);
+    }
+
+    if (slo.minRequestsPerSecond !== undefined && summary.overallRequestsPerSecond < slo.minRequestsPerSecond) {
+      failures.push(`requestsPerSecond ${summary.overallRequestsPerSecond.toFixed(2)} < ${slo.minRequestsPerSecond}`);
+    }
+
+    return {
+      passed: failures.length === 0,
+      failures
+    };
+  }
+
+  private buildDiagnosticsSummary(results: EndpointResult[], config: DiagnosticsConfig): DiagnosticsSummary {
+    return buildDiagnosticsSummaryUtil(results, config, DEFAULT_MASK_KEYS);
+  }
+
+  private buildTransactionGroupResults(
+    groups: TransactionGroupConfig[],
+    endpointResults: EndpointResult[],
+    totalDurationMs: number,
+    coSettings: { enabled: boolean; expectedIntervalMs?: number }
+  ): TransactionGroupResult[] {
+    return buildTransactionGroupResultsUtil(groups, endpointResults, totalDurationMs, coSettings);
+  }
+
   /**
    * Saves benchmark results to JSON, CSV, and HTML files.
    * @param results BenchmarkResult object.
@@ -1081,120 +1562,84 @@ export class Glockit {
    * @param htmlPath Optional path to save HTML file.
    */
   async saveResults(results: BenchmarkResult, jsonPath: string, csvPath: string, htmlPath?: string): Promise<void> {
-    await this.platform.saveResults(results, jsonPath, csvPath);
+    const outputs: ReporterOutputConfig[] = [
+      { type: 'json', path: jsonPath },
+      { type: 'csv', path: csvPath }
+    ];
 
-    // Save HTML results if path provided
     if (htmlPath) {
-        const html = this.generateHtmlReport(results);
-        await this.platform.saveHtmlReport(html, htmlPath);
-        results.htmlPath = htmlPath;
+      outputs.push({ type: 'html', path: htmlPath });
     }
+
+    await this.saveWithReporters(results, outputs);
   }
 
   /**
-   * Generates an HTML report from benchmark results.
+   * Saves benchmark results with pluggable reporters.
    */
-  private generateHtmlReport(results: BenchmarkResult): string {
-    const { summary, results: endpointResults, timestamp } = results;
-    const date = new Date(timestamp).toLocaleString();
+  async saveWithReporters(results: BenchmarkResult, outputs: ReporterOutputConfig[]): Promise<void> {
+    for (const output of outputs) {
+      const type = output.type.trim().toLowerCase();
 
-    const rows = endpointResults.map(r => `
-      <tr>
-        <td>${r.name}</td>
-        <td class="url-cell">${r.method} ${r.url}</td>
-        <td>${r.totalRequests}</td>
-        <td class="success">${r.successfulRequests}</td>
-        <td class="${r.failedRequests > 0 ? 'failure' : ''}">${r.failedRequests}</td>
-        <td>${r.averageResponseTime.toFixed(2)}ms</td>
-        <td>${r.minResponseTime.toFixed(0)}ms</td>
-        <td>${r.maxResponseTime.toFixed(0)}ms</td>
-        <td>${r.requestsPerSecond.toFixed(2)}</td>
-      </tr>
-    `).join('');
+      if (!type) {
+        throw new Error('Reporter type must be a non-empty string');
+      }
 
-    return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Glockit Benchmark Report</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #f8f9fa; }
-        .header { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border-left: 5px solid #007bff; }
-        h1 { margin-top: 0; color: #007bff; }
-        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; }
-        .card .value { font-size: 24px; font-weight: bold; color: #007bff; display: block; }
-        .card .label { font-size: 14px; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; }
-        .card.success .value { color: #28a745; }
-        .card.failure .value { color: #dc3545; }
-        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background-color: #f1f3f5; font-weight: 600; color: #495057; }
-        tr:last-child td { border-bottom: none; }
-        tr:hover { background-color: #f8f9fa; }
-        .success { color: #28a745; font-weight: 600; }
-        .failure { color: #dc3545; font-weight: 600; }
-        .url-cell { font-family: monospace; font-size: 13px; color: #666; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .footer { margin-top: 40px; text-align: center; color: #6c757d; font-size: 14px; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🚀 Glockit Benchmark Report</h1>
-        <p>Generated on <strong>${date}</strong></p>
-    </div>
+      if (type === 'json') {
+        if (!output.path) {
+          throw new Error('JSON reporter requires a path');
+        }
+        await this.platform.saveResults(results, output.path, undefined, undefined);
+        continue;
+      }
 
-    <div class="summary-grid">
-        <div class="card">
-            <span class="label">Total Requests</span>
-            <span class="value">${summary.totalRequests}</span>
-        </div>
-        <div class="card success">
-            <span class="label">Successful</span>
-            <span class="value">${summary.totalSuccessful}</span>
-        </div>
-        <div class="card failure">
-            <span class="label">Failed</span>
-            <span class="value">${summary.totalFailed}</span>
-        </div>
-        <div class="card">
-            <span class="label">Avg. Response Time</span>
-            <span class="value">${summary.averageResponseTime.toFixed(2)}ms</span>
-        </div>
-        <div class="card">
-            <span class="label">Overall RPS</span>
-            <span class="value">${summary.overallRequestsPerSecond.toFixed(2)}</span>
-        </div>
-    </div>
+      if (type === 'csv') {
+        if (!output.path) {
+          throw new Error('CSV reporter requires a path');
+        }
+        await this.platform.saveResults(results, undefined, output.path, undefined);
+        continue;
+      }
 
-    <h2>Detailed Results</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Endpoint</th>
-                <th>URL</th>
-                <th>Total</th>
-                <th>Success</th>
-                <th>Failure</th>
-                <th>Avg Time</th>
-                <th>Min</th>
-                <th>Max</th>
-                <th>RPS</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${rows}
-        </tbody>
-    </table>
+      if (type === 'html') {
+        if (!output.path) {
+          throw new Error('HTML reporter requires a path');
+        }
+        const html = generateHtmlReport(results);
+        await this.platform.saveHtmlReport(html, output.path);
+        results.htmlPath = output.path;
+        continue;
+      }
 
-    <div class="footer">
-        Generated by Glockit v1.0.7 - Lightweight API Benchmarking Tool
-    </div>
-</body>
-</html>
-    `;
+      if (type === 'junit') {
+        if (!output.path) {
+          throw new Error('JUnit reporter requires a path');
+        }
+        const xml = generateJunitReport(results);
+        await this.savePlainTextFile(xml, output.path);
+        continue;
+      }
+
+      const customReporter = this.reporters.get(type);
+      if (!customReporter) {
+        throw new Error(`Unknown reporter type: ${output.type}`);
+      }
+
+      await customReporter(results, output, {
+        platform: this.platform,
+        generateHtmlReport: () => generateHtmlReport(results),
+        generateJunitReport: () => generateJunitReport(results)
+      });
+    }
+  }
+
+  private async savePlainTextFile(content: string, outputPath: string): Promise<void> {
+    if (this.platform.name !== 'node') {
+      throw new Error('junit reporter is currently supported only on the node platform');
+    }
+
+    const fs = require('node:fs') as typeof import('node:fs');
+    fs.writeFileSync(outputPath, content, 'utf8');
   }
 
   /**
@@ -1210,7 +1655,9 @@ export class Glockit {
   }
 }
 
-export { NodePlatform } from './node-platform';
-export { BrowserPlatform } from './browser-platform';
+export { NodePlatform } from './platform/node-platform';
+export { BrowserPlatform } from './platform/browser-platform';
+export { ObservabilityManager } from './observability/observability';
+export { DistributedCoordinator, mergeDistributedResults } from './distributed/distributed';
 export * from './types';
 
