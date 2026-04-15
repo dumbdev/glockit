@@ -19,7 +19,7 @@
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js",
     "watch": "tsc --watch",
-    "test": "npx ts-node src/test-all-features.ts",
+    "test": "jest",
     "test:jest": "jest",
     "test:watch": "jest --watch"
   },
@@ -30,15 +30,16 @@
       "<rootDir>/src"
     ],
     "moduleNameMapper": {
-      "chalk": "<rootDir>/node_modules/chalk/source/index.js"
+      "^chalk/source$": "<rootDir>/src/__mocks__/chalk.ts",
+      "^chalk$": "<rootDir>/src/__mocks__/chalk.ts"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(chalk|ansi-styles|#ansi-styles)/)"
+      "node_modules/"
     ]
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dumbdev/glockit.git"
+    "url": "git+https://github.com/najamcodes/glockit.git"
   },
   "keywords": [
     "benchmark",
@@ -54,6 +55,14 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@grpc/grpc-js": "1.14.3",
+    "@grpc/proto-loader": "0.8.0",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.214.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.214.0",
+    "@opentelemetry/resources": "2.6.1",
+    "@opentelemetry/sdk-metrics": "2.6.1",
+    "@opentelemetry/sdk-trace-base": "2.6.1",
     "axios": "^1.14.0",
     "chalk": "^5.6.2",
     "commander": "^11.0.0",

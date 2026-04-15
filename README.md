@@ -34,8 +34,10 @@ Glockit is a lightweight TypeScript CLI and library for benchmarking REST APIs. 
 - **Automatic Retries**: Configurable retry mechanism with exponential backoff for flaky endpoints.
 - **Minimal Dependencies**: Optimized for performance and reliability.
 - **Multi-format Output**: Generates detailed JSON, CSV, and **HTML** reports with timing and size metrics.
+- **Pluggable Reporters**: Built-in `json`, `csv`, `html`, and `junit` reporters, plus custom sinks via `registerReporter`.
 - **Cross-Platform Support**: Works in Node.js and Browser environments via a platform abstraction layer.
 - **Security-conscious Logging**: Automatically sanitizes sensitive data (like tokens and passwords) in logs.
+- **Observability Ready**: Optional Prometheus endpoint and OpenTelemetry OTLP metrics and traces export.
 
 ## Installation
 
@@ -92,7 +94,14 @@ glockit run [options]
 - `--no-progress`: Disable real-time progress bar.
 - `-d, --delay <ms>`: Delay between requests.
 - `--save`: Save results to `.json`, `.csv`, and `.html` files.
+- `--reporters <list>`: Comma-separated reporters to save (for example: `json,csv,html,junit`).
+- `--compare-with <file>`: Compare the current run with a previous benchmark JSON result.
+- `--preview-feeder [count]`: Preview feeder rows before benchmark run (default: 5).
+- `--preview-feeder-only [count]`: Preview feeder rows and exit without running benchmark.
+- `--no-fail-on-slo`: Do not exit with non-zero status when SLO checks fail.
 - `-v, --version`: Show version number.
+
+When observability is enabled in configuration, Glockit will also print exporter status in the benchmark summary.
 
 ## Programmatic Usage
 
@@ -148,7 +157,102 @@ You can also implement the `Platform` interface to support other environments or
   - `concurrent` (number): Number of concurrent requests (default: 1).
   - `timeout` (number): Request timeout in ms (default: 5000).
   - `requestDelay` (number): Delay in ms between requests.
+  - `executor` (string): Scheduling mode: `concurrency` (default) or `arrival-rate`.
+  - `arrivalRate` (number): Target requests/second when using `arrival-rate` executor.
+  - `loadShape` (object): Optional rate curve applied to `arrivalRate`.
+    - `mode` (string): `step`, `burst`, or `jitter`.
+    - `steps` (array, mode=`step`): sequence of `{ afterMs, rate }` transitions.
+    - `burstIntervalMs` (number, mode=`burst`): burst cycle length.
+    - `burstDurationMs` (number, mode=`burst`): active burst window per cycle.
+    - `burstMultiplier` (number, mode=`burst`): multiplier applied during burst window.
+    - `jitterRatio` (number, mode=`jitter`): random variation ratio from `0` to `1`.
+  - `phases` (array): Optional sequential load phases for timed traffic.
+    - `name` (string): Phase label (e.g., `warmup`, `steady`).
+    - `duration` (number): Phase duration in ms.
+    - `concurrent` (number): Optional phase-specific concurrency.
+    - `throttle` (number): Optional phase-specific throttle delay in ms.
+    - `requestDelay` (number): Optional phase-specific request delay in ms.
+    - `arrivalRate` (number): Optional phase-specific target requests/second.
+  - `dataFeeder` (object): Optional external test data source.
+    - `path` (string): Path to CSV or JSON file.
+    - `format` (string): `csv` or `json`.
+    - `strategy` (string): `sequential` (default) or `random`.
+    - CSV supports quoted values and escaped quotes (`""`).
   - `headers` (object): Global request headers.
+  - `slo` (object): Optional CI quality gates.
+    - `maxErrorRate` (number): Maximum allowed error rate from 0 to 1.
+    - `maxAvgResponseTimeMs` (number): Maximum allowed average response time.
+    - `p95Ms` (number): Maximum allowed p95 response time.
+    - `p99Ms` (number): Maximum allowed p99 response time.
+    - `minRequestsPerSecond` (number): Minimum required throughput.
+  - `coordinatedOmission` (object): Optional latency percentile correction.
+    - `enabled` (boolean): Enables coordinated omission correction.
+    - `expectedIntervalMs` (number): Expected request interval for correction.
+      - If omitted, Glockit derives it from `arrivalRate` when available.
+  - `scenarioMix` (object): Optional weighted multi-scenario execution mode.
+    - `enabled` (boolean): Enables scenario-mix mode.
+    - `strategy` (string): `weighted-random` (default behavior).
+    - `scenarios` (array): Weighted scenario definitions.
+      - `name` (string): Scenario label.
+      - `weight` (number): Relative scenario selection probability (default: 1).
+      - `flow` (array): Ordered list of endpoint names to execute as one scenario journey.
+  - `virtualUsers` (object): Optional per-worker session behavior.
+    - `sessionScope` (boolean): Isolates variables per worker session.
+    - `persistCookies` (boolean): Stores and replays cookies per session.
+  - `transactionGroups` (array): Optional grouped user-journey metrics.
+    - `name` (string): Group label (for example `checkout-journey`).
+    - `endpoints` (array): Ordered endpoint names included in this transaction.
+  - `diagnostics` (object): Optional sampled failure diagnostics.
+    - `enabled` (boolean): Enables diagnostics collection for failed requests.
+    - `sampleSize` (number): Maximum failure samples retained in summary.
+    - `maskKeys` (array): Case-insensitive keys to mask in headers/bodies.
+    - `maxBodyLength` (number): Maximum serialized body length retained.
+    - `includeHeaders` (boolean): Include request/response headers in diagnostics samples.
+  - `observability` (object): Optional exporters.
+    - `prometheus` (object): Prometheus-compatible text exposition endpoint.
+      - `enabled` (boolean): Enables Prometheus endpoint server.
+      - `host` (string): Bind host (default: `127.0.0.1`).
+      - `port` (number): Bind port, supports `0` for random free port (default: `9464`).
+      - `path` (string): Exposition path (default: `/metrics`).
+      - `keepAlive` (boolean): If `false`, server is unref'd so it does not keep CLI process alive.
+    - `otel` (object): OpenTelemetry OTLP metric export.
+      - `enabled` (boolean): Enables OTLP export.
+      - `endpoint` (string): OTLP HTTP metrics endpoint (e.g. `http://localhost:4318/v1/metrics`).
+      - `headers` (object): Optional OTLP HTTP headers.
+      - `intervalMs` (number): Export interval for metric reader (minimum `1000`).
+      - `serviceName` (string): `service.name` resource attribute (default: `glockit`).
+      - `attributes` (object): Additional resource attributes.
+      - `traces` (object): Optional OTLP traces export.
+        - `enabled` (boolean): Enables OTLP trace export.
+        - `endpoint` (string): OTLP HTTP traces endpoint (e.g. `http://localhost:4318/v1/traces`).
+        - `headers` (object): Optional OTLP HTTP headers for traces.
+        - `serviceName` (string): Trace `service.name` override.
+        - `attributes` (object): Additional trace resource attributes.
+        - `samplingRatio` (number): Sampling ratio from `0` to `1`.
+  - `reporters` (array): Optional reporter outputs for saved benchmark artifacts.
+    - `type` (string): Reporter key (`json`, `csv`, `html`, `junit`, or registered custom reporter).
+    - `path` (string): Output destination path (optional; CLI can auto-generate one).
+    - `options` (object): Reporter-specific options passed to custom reporters.
+  - `distributed` (object): Optional coordinator/worker distributed execution.
+    - `enabled` (boolean): Enables distributed mode.
+    - `role` (string): `coordinator` or `worker`.
+    - `coordinatorUrl` (string): Required for worker role.
+    - `workerId` (string): Optional worker identifier.
+    - `expectedWorkers` (number): Required for coordinator role.
+    - `host` (string): Coordinator bind host (default: `127.0.0.1`).
+    - `port` (number): Coordinator bind port (default: `9876`, supports `0`).
+    - `joinTimeoutMs` (number): Wait time for worker join.
+    - `resultTimeoutMs` (number): Wait time for worker results.
+    - `pollIntervalMs` (number): Worker poll interval while waiting for assignment.
+    - `heartbeatIntervalMs` (number): Worker heartbeat interval to coordinator.
+    - `staleWorkerTimeoutMs` (number): Coordinator stale worker timeout.
+    - `authToken` (string): Optional shared token required by coordinator endpoints.
+    - `authHeaderName` (string): Header key used for auth token exchange (default: `x-glockit-token`).
+    - `resultSubmitRetries` (number): Worker retry count for submitting final result (default: `3`).
+    - `resultSubmitBackoffMs` (number): Base exponential backoff for submit retries in ms (default: `1000`).
+    - `leaseBatchSize` (number): Endpoints leased per plan response (default: `1`).
+    - `assignmentStrategy` (string): Lease scheduler strategy: `round-robin` or `least-loaded`.
+    - `partitionStrategy` (string): `round-robin`.
 - `endpoints` (array): List of endpoint configurations.
   - `name` (string): Unique identifier for the endpoint.
   - `url` (string): Endpoint path (relative to `baseUrl`).
@@ -215,6 +319,283 @@ Extract values from responses using dot-notation paths to use in subsequent requ
 - **Text**: If the response is not JSON, it is treated as a string.
 - **Binary**: For binary data, `getObjectSizeKB` uses the `Content-Length` header or calculates the buffer size.
 - **Default Headers**: Glockit uses `axios` and assumes `application/json` for both requests and responses unless overridden.
+
+## Coordinated Omission Correction
+
+When load generators slow down under stress, observed latency percentiles can look artificially optimistic.
+Enable coordinated omission correction to compensate by adding synthetic latency samples based on the expected request interval.
+
+```json
+{
+  "global": {
+    "executor": "arrival-rate",
+    "arrivalRate": 50,
+    "coordinatedOmission": {
+      "enabled": true,
+      "expectedIntervalMs": 20
+    }
+  }
+}
+```
+
+CLI summary will show when correction is active, including interval and number of synthetic samples applied.
+
+## Weighted Scenario Mix
+
+Use `scenarioMix` when you want realistic traffic patterns composed of multiple user journeys with relative weights.
+
+```json
+{
+  "global": {
+    "maxRequests": 200,
+    "concurrent": 10,
+    "scenarioMix": {
+      "enabled": true,
+      "strategy": "weighted-random",
+      "scenarios": [
+        {
+          "name": "browse",
+          "weight": 4,
+          "flow": ["list-products", "get-product"]
+        },
+        {
+          "name": "checkout",
+          "weight": 1,
+          "flow": ["login", "add-to-cart", "checkout"]
+        }
+      ]
+    }
+  },
+  "endpoints": [
+    { "name": "list-products", "url": "/products", "method": "GET" },
+    { "name": "get-product", "url": "/products/1", "method": "GET" },
+    { "name": "login", "url": "/auth/login", "method": "POST" },
+    { "name": "add-to-cart", "url": "/cart", "method": "POST" },
+    { "name": "checkout", "url": "/checkout", "method": "POST" }
+  ]
+}
+```
+
+In this mode, Glockit picks a scenario based on weight and executes its flow sequentially, while workers run scenarios concurrently.
+
+## Virtual User Session Scope
+
+Enable session scope to isolate variables and cookies per worker so one virtual user does not leak state into another.
+
+```json
+{
+  "global": {
+    "concurrent": 10,
+    "virtualUsers": {
+      "sessionScope": true,
+      "persistCookies": true
+    }
+  }
+}
+```
+
+When enabled:
+
+- extracted variables are stored per worker session
+- `Set-Cookie` headers are captured and sent back as `Cookie` on subsequent requests for that session
+- shared global variables remain unchanged for other sessions
+
+## Transaction Grouping
+
+Transaction groups let you aggregate endpoint-level results into journey-level metrics such as browse, login, or checkout flows.
+
+```json
+{
+  "global": {
+    "transactionGroups": [
+      {
+        "name": "browse-journey",
+        "endpoints": ["list-products", "get-product"]
+      },
+      {
+        "name": "checkout-journey",
+        "endpoints": ["login", "add-to-cart", "checkout"]
+      }
+    ]
+  }
+}
+```
+
+Glockit prints transaction-group summary rows in CLI output, including total requests, success/failure counts, average latency, p95 latency, and grouped RPS.
+
+## Failure Diagnostics
+
+Enable diagnostics to capture sampled failed-request payloads for troubleshooting while masking sensitive fields.
+
+```json
+{
+  "global": {
+    "diagnostics": {
+      "enabled": true,
+      "sampleSize": 20,
+      "maskKeys": ["authorization", "password", "token", "cookie"],
+      "maxBodyLength": 2000,
+      "includeHeaders": true
+    }
+  }
+}
+```
+
+When enabled, Glockit reports sampled/total failure counts in CLI summary and includes masked samples in the JSON result summary.
+
+## Load Shape Curves
+
+Load shapes let arrival-rate tests mimic production traffic variation without manually splitting many tiny phases.
+
+Step curve example:
+
+```json
+{
+  "global": {
+    "executor": "arrival-rate",
+    "arrivalRate": 10,
+    "loadShape": {
+      "mode": "step",
+      "steps": [
+        { "afterMs": 0, "rate": 10 },
+        { "afterMs": 30000, "rate": 25 },
+        { "afterMs": 60000, "rate": 50 }
+      ]
+    }
+  }
+}
+```
+
+Burst curve example:
+
+```json
+{
+  "global": {
+    "executor": "arrival-rate",
+    "arrivalRate": 20,
+    "loadShape": {
+      "mode": "burst",
+      "burstIntervalMs": 10000,
+      "burstDurationMs": 2000,
+      "burstMultiplier": 3
+    }
+  }
+}
+```
+
+Jitter curve example:
+
+```json
+{
+  "global": {
+    "executor": "arrival-rate",
+    "arrivalRate": 40,
+    "loadShape": {
+      "mode": "jitter",
+      "jitterRatio": 0.2
+    }
+  }
+}
+```
+
+## Observability Export
+
+Glockit can emit benchmark telemetry in standard formats:
+
+- **Prometheus endpoint** for pull-based scraping.
+- **OpenTelemetry OTLP metrics** for push/export to collectors and observability backends.
+- **OpenTelemetry OTLP traces** for benchmark run and per-endpoint summary spans.
+
+Example:
+
+```json
+{
+  "global": {
+    "maxRequests": 100,
+    "observability": {
+      "prometheus": {
+        "enabled": true,
+        "host": "127.0.0.1",
+        "port": 9464,
+        "path": "/metrics",
+        "keepAlive": false
+      },
+      "otel": {
+        "enabled": true,
+        "endpoint": "http://localhost:4318/v1/metrics",
+        "serviceName": "glockit-benchmark",
+        "attributes": {
+          "deployment.environment": "staging"
+        },
+        "traces": {
+          "enabled": true,
+          "endpoint": "http://localhost:4318/v1/traces",
+          "samplingRatio": 1
+        }
+      }
+    }
+  },
+  "endpoints": [
+    { "name": "Health", "url": "/health", "method": "GET" }
+  ]
+}
+```
+
+## Distributed Worker Mode
+
+Distributed mode supports multi-node execution by leasing endpoint work to workers.
+
+Coordinator config example:
+
+```json
+{
+  "global": {
+    "distributed": {
+      "enabled": true,
+      "role": "coordinator",
+      "host": "127.0.0.1",
+      "port": 9876,
+      "expectedWorkers": 2,
+      "assignmentStrategy": "least-loaded",
+      "leaseBatchSize": 2,
+      "authToken": "shared-secret",
+      "authHeaderName": "x-glockit-token",
+      "staleWorkerTimeoutMs": 20000,
+      "joinTimeoutMs": 60000,
+      "resultTimeoutMs": 300000
+    }
+  }
+}
+```
+
+Worker config example:
+
+```json
+{
+  "global": {
+    "distributed": {
+      "enabled": true,
+      "role": "worker",
+      "coordinatorUrl": "http://127.0.0.1:9876",
+      "workerId": "worker-a",
+      "pollIntervalMs": 500,
+      "heartbeatIntervalMs": 5000,
+      "authToken": "shared-secret",
+      "resultSubmitRetries": 5,
+      "resultSubmitBackoffMs": 1200
+    }
+  }
+}
+```
+
+Flow:
+
+- workers join coordinator
+- workers send heartbeat events while waiting/running
+- coordinator leases endpoint assignments to workers on each plan poll (single or batched)
+- coordinator can prioritize leases by `assignmentStrategy` (`round-robin` or `least-loaded`)
+- workers run assigned endpoints, post results, then pull the next assignment
+- coordinator prunes stale workers by timeout, re-queues unfinished endpoints, and merges all completed results into one benchmark summary
 
 ### Assertions
 
@@ -465,6 +846,20 @@ timestamp,endpoint,method,status,responseTime,contentLength
 2023-01-01T12:00:00.100Z,Get Products,GET,200,78,2048
 ```
 
+### JUnit Output
+JUnit XML output is useful for CI/CD systems that ingest test artifacts.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="glockit" tests="2" failures="1" time="12.345">
+  <testsuite name="Login" tests="1" failures="1" time="6.100">
+    <testcase classname="glockit.endpoint" name="POST /auth/login" time="6.100">
+      <failure message="2 request(s) failed">timeout; 500 Internal Server Error</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
+```
+
 ## API Reference
 
 ### Class: Glockit
@@ -494,9 +889,19 @@ Add an Axios response interceptor.
 ##### saveResults(
   results: BenchmarkResults,
   jsonFile: string,
-  csvFile?: string
+  csvFile: string,
+  htmlFile?: string
 ): Promise<void>
 Save benchmark results to files.
+
+##### saveWithReporters(
+  results: BenchmarkResults,
+  outputs: ReporterOutputConfig[]
+): Promise<void>
+Save benchmark results with one or more reporter outputs.
+
+##### registerReporter(name: string, reporter: BenchmarkReporter): void
+Register a custom reporter sink for `saveWithReporters` and CLI `--reporters` usage.
 
 ##### generateExampleConfig(): BenchmarkConfig
 Generate an example configuration object.
