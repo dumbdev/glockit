@@ -1,0 +1,7 @@
+site_name: Glockit Docs
+docs_dir: src
+site_dir: ../docs
+
+git_repo:
+  url:  https://github.com/najamcodes/glockit
+  branch: main
