@@ -1,7 +1,51 @@
 site_name: Glockit Docs
-docs_dir: src
+site_description: Glockit is a lightweight TypeScript CLI and library for benchmarking REST APIs.
+site_url: ""
+repo_url: https://github.com/najamcodes/glockit
+repo_name: glockit
 site_dir: ../docs
+docs_dir: src
+theme:
+  name: readthedocs
 
-git_repo:
-  url:  https://github.com/najamcodes/glockit
-  branch: main
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Summary: SUMMARY.md
+  - Introduction: introduction.md
+  - Quick Start: quickstart.md
+  - CLI: cli.md
+  - Configuration:
+    - Overview: configuration/overview.md
+    - Global Settings: configuration/global.md
+    - Endpoint Settings: configuration/endpoints.md
+    - Validation Rules: configuration/validation.md
+  - Features:
+    - Overview: features/overview.md
+    - HTTP, WebSocket, and gRPC: features/transports.md
+    - Importers (OpenAPI, Postman, HAR): features/importers.md
+    - Distributed Execution: features/distributed.md
+    - Observability: features/observability.md
+    - Reporting and UI: features/reporting.md
+  - Operations:
+    - Overview: operations/overview.md
+    - Performance and SLO: operations/performance.md
+    - Troubleshooting: operations/troubleshooting.md
+    - Security and Safety: operations/security.md
+  - Examples:
+    - Overview: examples/overview.md
+    - Complete Setups: examples/complete-setups.md
+    - HTTP Smoke and Load: examples/http-smoke-and-load.md
+    - WebSocket Check: examples/websocket-check.md
+    - gRPC Unary: examples/grpc-unary.md
+    - Distributed Coordinator and Workers: examples/distributed-coordinator-workers.md
+    - Import OpenAPI to Benchmark: examples/import-openapi-to-benchmark.md
+    - CI Reporting Workflow: examples/ci-reporting-workflow.md
+  - Architecture: architecture.md

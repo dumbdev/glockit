@@ -1,265 +1,199 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light">
-    <head>
-        <meta charset="utf-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        
-        
-        
-        <link rel="shortcut icon" href="../../img/favicon.ico">
-        <title>Validation - Glockit Docs</title>
-        <link href="../../css/bootstrap.min.css" rel="stylesheet">
-        <link href="../../css/fontawesome.min.css" rel="stylesheet">
-        <link href="../../css/brands.min.css" rel="stylesheet">
-        <link href="../../css/solid.min.css" rel="stylesheet">
-        <link href="../../css/v4-font-face.min.css" rel="stylesheet">
-        <link href="../../css/base.css" rel="stylesheet">
-        <link id="hljs-light" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" >
-        <link id="hljs-dark" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" disabled>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
-        <script>hljs.highlightAll();</script> 
-    </head>
-
-    <body>
-        <div class="navbar fixed-top navbar-expand-lg navbar-dark bg-primary">
-            <div class="container">
-                <a class="navbar-brand" href="../..">Glockit Docs</a>
-                <!-- Expander button -->
-                <button type="button" class="navbar-toggler" data-bs-toggle="collapse" data-bs-target="#navbar-collapse" aria-controls="navbar-collapse" aria-expanded="false" aria-label="Toggle navigation">
-                    <span class="navbar-toggler-icon"></span>
-                </button>
-
-                <!-- Expanded navigation -->
-                <div id="navbar-collapse" class="navbar-collapse collapse">
-                        <!-- Main navigation -->
-                        <ul class="nav navbar-nav">
-                            <li class="nav-item">
-                                <a href="../../SUMMARY/" class="nav-link">Summary</a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="../../architecture/" class="nav-link">Architecture</a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="../../cli/" class="nav-link">CLI</a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="../../introduction/" class="nav-link">Introduction</a>
-                            </li>
-                            <li class="nav-item">
-                                <a href="../../quickstart/" class="nav-link">Quick Start</a>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a href="#" class="nav-link dropdown-toggle active" aria-current="page" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Configuration</a>
-                                <ul class="dropdown-menu">
-                                    
-<li>
-    <a href="../endpoints/" class="dropdown-item">Endpoint Settings</a>
-</li>
-                                    
-<li>
-    <a href="../global/" class="dropdown-item">Global Settings</a>
-</li>
-                                    
-<li>
-    <a href="../overview/" class="dropdown-item">Configuration</a>
-</li>
-                                    
-<li>
-    <a href="./" class="dropdown-item active" aria-current="page">Validation</a>
-</li>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Examples</a>
-                                <ul class="dropdown-menu">
-                                    
-<li>
-    <a href="../../examples/ci-reporting-workflow/" class="dropdown-item">CI Reporting Workflow Example</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/complete-setups/" class="dropdown-item">Complete Setups</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/distributed-coordinator-workers/" class="dropdown-item">Distributed Coordinator and Workers</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/grpc-unary/" class="dropdown-item">gRPC Unary Example</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/http-smoke-and-load/" class="dropdown-item">HTTP Smoke and Load Examples</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/import-openapi-to-benchmark/" class="dropdown-item">Import OpenAPI to Benchmark</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/overview/" class="dropdown-item">Examples Overview</a>
-</li>
-                                    
-<li>
-    <a href="../../examples/websocket-check/" class="dropdown-item">WebSocket Check Example</a>
-</li>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Features</a>
-                                <ul class="dropdown-menu">
-                                    
-<li>
-    <a href="../../features/distributed/" class="dropdown-item">Distributed Execution</a>
-</li>
-                                    
-<li>
-    <a href="../../features/importers/" class="dropdown-item">Importers</a>
-</li>
-                                    
-<li>
-    <a href="../../features/observability/" class="dropdown-item">Observability</a>
-</li>
-                                    
-<li>
-    <a href="../../features/overview/" class="dropdown-item">Features</a>
-</li>
-                                    
-<li>
-    <a href="../../features/reporting/" class="dropdown-item">Reporting and UI</a>
-</li>
-                                    
-<li>
-    <a href="../../features/transports/" class="dropdown-item">HTTP, WebSocket, and gRPC</a>
-</li>
-                                </ul>
-                            </li>
-                            <li class="nav-item dropdown">
-                                <a href="#" class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown"  aria-expanded="false">Operations</a>
-                                <ul class="dropdown-menu">
-                                    
-<li>
-    <a href="../../operations/overview/" class="dropdown-item">Operations</a>
-</li>
-                                    
-<li>
-    <a href="../../operations/performance/" class="dropdown-item">Performance and SLO</a>
-</li>
-                                    
-<li>
-    <a href="../../operations/security/" class="dropdown-item">Security and Safety</a>
-</li>
-                                    
-<li>
-    <a href="../../operations/troubleshooting/" class="dropdown-item">Troubleshooting</a>
-</li>
-                                </ul>
-                            </li>
-                        </ul>
-
-                    <ul class="nav navbar-nav ms-md-auto">
-                        <li class="nav-item">
-                            <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
-                                <i class="fa fa-search"></i> Search
-                            </a>
-                        </li>
-                            <li class="nav-item">
-                                <a rel="prev" href="../overview/" class="nav-link">
-                                    <i class="fa fa-arrow-left"></i> Previous
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a rel="next" href="../../examples/ci-reporting-workflow/" class="nav-link">
-                                    Next <i class="fa fa-arrow-right"></i>
-                                </a>
-                            </li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <div class="container">
-            <div class="row">
-                    <div class="col-md-3"><div class="navbar-expand-md bs-sidebar hidden-print affix" role="complementary">
-    <div class="navbar-header">
-        <button type="button" class="navbar-toggler collapsed" data-bs-toggle="collapse" data-bs-target="#toc-collapse" title="Table of Contents">
-            <span class="fa fa-angle-down"></span>
-        </button>
-    </div>
-
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Validation Rules - Glockit Docs</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
     
-    <div id="toc-collapse" class="navbar-collapse collapse card bg-body-tertiary">
-        <ul class="nav flex-column">
-            
-            <li class="nav-item" data-bs-level="1"><a href="#validation" class="nav-link">Validation</a>
-              <ul class="nav flex-column">
-            <li class="nav-item" data-bs-level="2"><a href="#root-requirements" class="nav-link">Root requirements</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#numeric-constraints" class="nav-link">Numeric constraints</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#role-requirements-in-distributed-mode" class="nav-link">Role requirements in distributed mode</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#transport-requirements" class="nav-link">Transport requirements</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#assertion-and-responsecheck-operators" class="nav-link">Assertion and responseCheck operators</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#dependency-integrity" class="nav-link">Dependency integrity</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-            <li class="nav-item" data-bs-level="2"><a href="#example" class="nav-link">Example</a>
-              <ul class="nav flex-column">
-              </ul>
-            </li>
-              </ul>
-            </li>
-        </ul>
-    </div>
-</div></div>
-                    <div class="col-md-9" role="main">
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Validation Rules";
+        var mkdocs_page_input_path = "configuration\\validation.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
 
-<h1 id="validation">Validation</h1>
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../.." class="icon icon-home"> Glockit Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../SUMMARY/">Summary</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../introduction/">Introduction</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../quickstart/">Quick Start</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../cli/">CLI</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Configuration</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../overview/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../global/">Global Settings</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../endpoints/">Endpoint Settings</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Validation Rules</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#root-requirements">Root requirements</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#numeric-constraints">Numeric constraints</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#role-requirements-in-distributed-mode">Role requirements in distributed mode</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#transport-requirements">Transport requirements</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#http">HTTP</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#websocket">WebSocket</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#grpc">gRPC</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#assertion-and-responsecheck-operators">Assertion and responseCheck operators</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#dependency-integrity">Dependency integrity</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#example">Example</a>
+    </li>
+    </ul>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Features</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/overview/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/transports/">HTTP, WebSocket, and gRPC</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/importers/">Importers (OpenAPI, Postman, HAR)</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/distributed/">Distributed Execution</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/observability/">Observability</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../features/reporting/">Reporting and UI</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Operations</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../operations/overview/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../operations/performance/">Performance and SLO</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../operations/troubleshooting/">Troubleshooting</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../operations/security/">Security and Safety</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Examples</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/overview/">Overview</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/complete-setups/">Complete Setups</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/http-smoke-and-load/">HTTP Smoke and Load</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/websocket-check/">WebSocket Check</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/grpc-unary/">gRPC Unary</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/distributed-coordinator-workers/">Distributed Coordinator and Workers</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/import-openapi-to-benchmark/">Import OpenAPI to Benchmark</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../examples/ci-reporting-workflow/">CI Reporting Workflow</a>
+                  </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../../architecture/">Architecture</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">Glockit Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Configuration</li>
+      <li class="breadcrumb-item active">Validation Rules</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/najamcodes/glockit/edit/master/docs/configuration/validation.md">Edit on glockit</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h1>
 <p>This chapter summarizes validator behavior from src/types/validator.ts.</p>
-<h2 id="root-requirements">Root requirements</h2>
+<h2 id="root-requirements">Root requirements<a class="headerlink" href="#root-requirements" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Config must be an object.</li>
 <li>Endpoints must exist and be a non-empty array.</li>
 <li>Endpoint names must be unique.</li>
 </ul>
-<h2 id="numeric-constraints">Numeric constraints</h2>
+<h2 id="numeric-constraints">Numeric constraints<a class="headerlink" href="#numeric-constraints" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Positive integers where documented for request and timeout fields</li>
 <li>Non-negative integers for throttle-like fields</li>
 <li>Ratios bounded in [0, 1] where applicable</li>
 </ul>
-<h2 id="role-requirements-in-distributed-mode">Role requirements in distributed mode</h2>
+<h2 id="role-requirements-in-distributed-mode">Role requirements in distributed mode<a class="headerlink" href="#role-requirements-in-distributed-mode" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Worker mode requires coordinatorUrl when distributed is enabled.</li>
 <li>Coordinator mode requires expectedWorkers when distributed is enabled.</li>
 </ul>
-<h2 id="transport-requirements">Transport requirements</h2>
-<h3 id="http">HTTP</h3>
+<h2 id="transport-requirements">Transport requirements<a class="headerlink" href="#transport-requirements" title="Permanent link">&para;</a></h2>
+<h3 id="http">HTTP<a class="headerlink" href="#http" title="Permanent link">&para;</a></h3>
 <ul>
 <li>URL must be absolute http or https, or relative with leading slash.</li>
 </ul>
-<h3 id="websocket">WebSocket</h3>
+<h3 id="websocket">WebSocket<a class="headerlink" href="#websocket" title="Permanent link">&para;</a></h3>
 <ul>
 <li>URL must be absolute ws or wss.</li>
 <li>websocket.responseTimeoutMs must be a positive integer when provided.</li>
 </ul>
-<h3 id="grpc">gRPC</h3>
+<h3 id="grpc">gRPC<a class="headerlink" href="#grpc" title="Permanent link">&para;</a></h3>
 <p>When transport is grpc:</p>
 <ul>
 <li>grpc object is required.</li>
@@ -268,18 +202,18 @@
 <li>grpc.metadata must be an object when provided.</li>
 <li>grpc.useTls must be a boolean when provided.</li>
 </ul>
-<h2 id="assertion-and-responsecheck-operators">Assertion and responseCheck operators</h2>
+<h2 id="assertion-and-responsecheck-operators">Assertion and responseCheck operators<a class="headerlink" href="#assertion-and-responsecheck-operators" title="Permanent link">&para;</a></h2>
 <ul>
 <li>equals</li>
 <li>contains</li>
 <li>exists</li>
 <li>matches</li>
 </ul>
-<h2 id="dependency-integrity">Dependency integrity</h2>
+<h2 id="dependency-integrity">Dependency integrity<a class="headerlink" href="#dependency-integrity" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Every dependency must reference an endpoint name that exists in the same config.</li>
 </ul>
-<h2 id="example">Example</h2>
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h2>
 <p>Invalid:</p>
 <pre><code class="language-json">{ &quot;global&quot;: { &quot;concurrent&quot;: -1 }, &quot;endpoints&quot;: [] }
 </code></pre>
@@ -288,82 +222,56 @@
   &quot;global&quot;: { &quot;concurrent&quot;: 2, &quot;maxRequests&quot;: 20 },
   &quot;endpoints&quot;: [{ &quot;name&quot;: &quot;health&quot;, &quot;url&quot;: &quot;/health&quot;, &quot;method&quot;: &quot;GET&quot; }]
 }
-</code></pre></div>
+</code></pre>
+              
             </div>
-        </div>
-
-        <footer class="col-md-12">
-            <hr>
-            <p>Documentation built with <a href="https://www.mkdocs.org/">MkDocs</a>.</p>
-        </footer>
-        <script src="../../js/bootstrap.bundle.min.js"></script>
-        <script>
-            var base_url = "../..",
-                shortcuts = {"help": 191, "next": 78, "previous": 80, "search": 83};
-        </script>
-        <script src="../../js/base.js"></script>
-        <script src="../../search/main.js"></script>
-
-        <div class="modal" id="mkdocs_search_modal" tabindex="-1" role="dialog" aria-labelledby="searchModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h4 class="modal-title" id="searchModalLabel">Search</h4>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <p>From here you can search these documents. Enter your search terms below.</p>
-                <form>
-                    <div class="form-group">
-                        <input type="search" class="form-control" placeholder="Search..." id="mkdocs-search-query" title="Type search term here">
-                    </div>
-                </form>
-                <div id="mkdocs-search-results" data-no-results-text="No results found"></div>
-            </div>
-            <div class="modal-footer">
-            </div>
-        </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../endpoints/" class="btn btn-neutral float-left" title="Endpoint Settings"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../../features/overview/" class="btn btn-neutral float-right" title="Overview">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
-</div><div class="modal" id="mkdocs_keyboard_modal" tabindex="-1" role="dialog" aria-labelledby="keyboardModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h4 class="modal-title" id="keyboardModalLabel">Keyboard Shortcuts</h4>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th style="width: 20%;">Keys</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td class="help shortcut"><kbd>?</kbd></td>
-                    <td>Open this help</td>
-                  </tr>
-                  <tr>
-                    <td class="next shortcut"><kbd>n</kbd></td>
-                    <td>Next page</td>
-                  </tr>
-                  <tr>
-                    <td class="prev shortcut"><kbd>p</kbd></td>
-                    <td>Previous page</td>
-                  </tr>
-                  <tr>
-                    <td class="search shortcut"><kbd>s</kbd></td>
-                    <td>Search</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="modal-footer">
-            </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
         </div>
-    </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/najamcodes/glockit" class="fa fa-code-fork" style="color: #fcfcfc"> glockit</a>
+        </span>
+    
+    
+      <span><a href="../endpoints/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../../features/overview/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
 </div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
 
-    </body>
+</body>
 </html>
