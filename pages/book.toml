@@ -1,0 +1,13 @@
+[book]
+title = "Glockit Documentation"
+authors = ["Syed Najam Abbas Naqvi"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "docs"
+
+[output.html]
+default-theme = "light"
+git-repository-url = "https://github.com/najamcodes/glockit"

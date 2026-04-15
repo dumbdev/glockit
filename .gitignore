@@ -7,5 +7,4 @@ dist
 build
 coverage
 .npmrc
-pages
 docs
