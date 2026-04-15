@@ -1,0 +1,12 @@
+# Ignore log files
+npm-debug.log
+pids
+*.log
+
+# Ignore runtime data
+node_modules
+dist
+coverage
+.npmrc
+pages
+docs
