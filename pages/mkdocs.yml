@@ -18,7 +18,7 @@ plugins:
   - search
 
 nav:
-  - Summary: SUMMARY.md
+  - Home: index.md
   - Introduction: introduction.md
   - Quick Start: quickstart.md
   - CLI: cli.md
